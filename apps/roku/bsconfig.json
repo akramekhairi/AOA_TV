@@ -1,0 +1,7 @@
+{
+  "rootDir": ".",
+  "files": ["manifest", "source/**/*", "components/**/*"],
+  "stagingDir": "../../.roku-staging",
+  "createPackage": false,
+  "copyToStaging": false
+}

@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: aoa-tv-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./apps/server/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DEMO_MODE
+        value: "false"
+      - key: HOST
+        value: 0.0.0.0
+      - key: ADMIN_KEY
+        generateValue: true
+      - key: ASSET_SIGNING_KEY
+        generateValue: true
+      - key: PUBLIC_URL
+        sync: false
+      - key: CORS_ORIGINS
+        value: https://akramekhairi.github.io
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: XTREAM_URL
+        sync: false
+      - key: XTREAM_USERNAME
+        sync: false
+      - key: XTREAM_PASSWORD
+        sync: false

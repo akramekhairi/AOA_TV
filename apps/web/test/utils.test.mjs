@@ -1,0 +1,11 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import ts from 'typescript';
+const source=readFileSync(new URL('../src/utils.ts',import.meta.url),'utf8');
+const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;
+const {backendUrl,clock,safeImage}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+test('backend URL is normalized and credentials cannot enter the API origin',()=>{assert.equal(backendUrl('https://example.com/api/v1/'),'https://example.com');assert.throws(()=>backendUrl('https://secret:password@example.com'));assert.throws(()=>backendUrl('http://remote.example'));assert.throws(()=>backendUrl('https://example.com?token=x'));assert.equal(backendUrl('http://localhost:3000/'),'http://localhost:3000');});
+test('media time formatting handles hours and negative positions',()=>{assert.equal(clock(3661),'1:01:01');assert.equal(clock(-1),'00:00');assert.equal(clock(65),'01:05');});
+test('image URLs reject executable schemes and embedded credentials',()=>{assert.equal(safeImage('javascript:alert(1)'),undefined);assert.equal(safeImage('https://key:password@host/image'),undefined);assert.equal(safeImage('https://host/image?a=1'),'https://host/image?a=1');});
+test('service worker excludes API, authorization and signed queries',()=>{const sw=readFileSync(new URL('../public/sw.js',import.meta.url),'utf8');assert.match(sw,/headers\.has\('Authorization'\)/);assert.match(sw,/url\.search/);assert.match(sw,/pathname\.includes\('\/api\/'\)/);});

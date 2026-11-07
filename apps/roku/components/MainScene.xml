@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="MainScene" extends="Scene">
+  <script type="text/brightscript" uri="MainScene.brs" />
+  <children>
+    <Rectangle width="1280" height="720" color="0x0B1220FF" />
+    <Rectangle width="266" height="720" color="0x111F33FF" />
+    <Label text="AOA TV" translation="[36,30]" width="220" height="60" font="font:LargeBoldSystemFont" />
+    <LabelList id="menu" translation="[24,114]" itemSize="[220,52]" numRows="8" />
+    <Label id="heading" translation="[300,32]" width="900" height="46" font="font:LargeBoldSystemFont" />
+    <Label id="connection" translation="[300,82]" width="900" height="34" font="font:SmallSystemFont" color="0xA7BEDAFF" />
+    <MarkupList id="list" translation="[300,130]" itemComponentName="CatalogRow" itemSize="[840,56]" itemSpacing="[0,4]" numRows="6" drawFocusFeedback="true" />
+    <Poster id="detailTitle" translation="[312,514]" width="810" height="48" loadDisplayMode="scaleToFit" />
+    <Poster id="descriptionImage" translation="[312,570]" width="810" height="92" loadDisplayMode="scaleToFit" />
+    <Label id="description" translation="[312,570]" width="850" height="94" wrap="true" numLines="3" font="font:SmallSystemFont" color="0xBFD0E5FF" />
+    <Label id="hint" translation="[300,678]" width="930" height="32" text="OK: open  |  *: favorite  |  Left: menu  |  Back: return" font="font:SmallSystemFont" color="0x9BB3D1FF" />
+    <Group id="details" visible="false">
+      <Rectangle translation="[284,116]" width="972" height="552" color="0x0B1220FF" />
+      <Poster id="fullTitle" translation="[310,126]" width="880" height="70" loadDisplayMode="scaleToFit" />
+      <Label id="fullTitleText" translation="[310,136]" width="880" height="60" font="font:MediumBoldSystemFont" />
+      <Poster id="fullDescription" translation="[310,208]" width="880" height="284" loadDisplayMode="scaleToFit" />
+      <Label id="fullDescriptionText" translation="[310,208]" width="880" height="284" wrap="true" numLines="9" font="font:SmallSystemFont" />
+      <LabelList id="detailButtons" translation="[310,514]" itemSize="[850,48]" numRows="3" />
+    </Group>
+    <Video id="video" width="1280" height="720" visible="false" enableUI="true" notificationInterval="1" />
+    <Timer id="playbackWatchdog" duration="25" repeat="false" />
+    <NetworkTask id="network" />
+  </children>
+</component>

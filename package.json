@@ -1,0 +1,26 @@
+{
+  "name": "aoa-tv",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "check": "npm run check --workspaces --if-present && bsc --project apps/roku/bsconfig.json",
+    "test": "npm run test --workspaces --if-present",
+    "dev": "npm run dev -w @aoa/server",
+    "dev:web": "npm run dev -w @aoa/web",
+    "package:roku": "node scripts/package-roku.mjs",
+    "sideload:roku": "node scripts/sideload-roku.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "brighterscript": "^0.73.8",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,11 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import ts from 'typescript';
+const source=readFileSync(new URL('../src/api.ts',import.meta.url),'utf8');
+const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+const {request,ApiError}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+test('requests use scoped authorization and never browser-cache API responses',async()=>{const original=globalThis.fetch;try{globalThis.fetch=async(url,options)=>{assert.equal(url,'https://backend.test/api/v1/favorites');assert.equal(options.headers.get('Authorization'),'Bearer phone-secret');assert.equal(options.cache,'no-store');return Response.json({items:[]});};assert.deepEqual(await request('https://backend.test','phone-secret','/favorites'),{items:[]});}finally{globalThis.fetch=original;}});
+test('backend errors preserve actionable details but hide credentials and URLs',async()=>{const original=globalThis.fetch;try{globalThis.fetch=async()=>Response.json({error:'Quota exhausted: https://provider.test/user/password?key=private token=secret'},{status:429});await assert.rejects(request('https://backend.test','t','/subtitles/search'),error=>error instanceof ApiError&&error.status===429&&error.message.includes('Quota exhausted')&&!error.message.includes('secret')&&!error.message.includes('provider.test'));}finally{globalThis.fetch=original;}});
+test('revoked credentials prompt pairing without surfacing backend internals',async()=>{const original=globalThis.fetch;try{globalThis.fetch=async()=>Response.json({error:'private'},{status:401});await assert.rejects(request('https://backend.test','t','/favorites'),/no longer paired/);}finally{globalThis.fetch=original;}});
+test('caller cancellation propagates without a misleading connectivity error',async()=>{const original=globalThis.fetch;try{const controller=new AbortController();controller.abort();globalThis.fetch=async(_url,options)=>{options.signal.throwIfAborted();};await assert.rejects(request('https://backend.test','t','/catalog',{},controller.signal),{name:'AbortError'});}finally{globalThis.fetch=original;}});

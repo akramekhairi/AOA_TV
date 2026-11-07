@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<component name="CatalogRow" extends="Group">
+  <interface>
+    <field id="itemContent" type="node" onChange="showContent" />
+    <field id="focusPercent" type="float" />
+  </interface>
+  <script type="text/brightscript" uri="CatalogRow.brs" />
+  <children>
+    <Label id="text" translation="[14,8]" width="800" height="40" font="font:MediumSystemFont" color="0xFFFFFFFF" />
+    <Poster id="image" translation="[14,4]" width="800" height="48" loadDisplayMode="scaleToFit" />
+  </children>
+</component>
