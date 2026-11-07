@@ -8,7 +8,7 @@
     <LabelList id="menu" translation="[24,114]" itemSize="[220,52]" numRows="8" />
     <Label id="heading" translation="[300,32]" width="900" height="46" font="font:LargeBoldSystemFont" />
     <Label id="connection" translation="[300,82]" width="900" height="34" font="font:SmallSystemFont" color="0xA7BEDAFF" />
-    <MarkupList id="list" translation="[300,130]" itemComponentName="CatalogRow" itemSize="[840,56]" itemSpacing="[0,4]" numRows="6" drawFocusFeedback="true" />
+    <MarkupList id="list" translation="[300,130]" itemComponentName="CatalogRow" itemSize="[840,56]" itemSpacing="[0,4]" numRows="6" drawFocusFeedback="false" />
     <Poster id="detailTitle" translation="[312,514]" width="810" height="48" loadDisplayMode="scaleToFit" />
     <Poster id="descriptionImage" translation="[312,570]" width="810" height="92" loadDisplayMode="scaleToFit" />
     <Label id="description" translation="[312,570]" width="850" height="94" wrap="true" numLines="3" font="font:SmallSystemFont" color="0xBFD0E5FF" />

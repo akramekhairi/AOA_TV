@@ -2,10 +2,11 @@
 <component name="CatalogRow" extends="Group">
   <interface>
     <field id="itemContent" type="node" onChange="showContent" />
-    <field id="focusPercent" type="float" />
+    <field id="focusPercent" type="float" onChange="updateFocus" />
   </interface>
   <script type="text/brightscript" uri="CatalogRow.brs" />
   <children>
+    <Rectangle id="focus" width="840" height="56" color="0x24496BFF" opacity="0" />
     <Label id="text" translation="[14,8]" width="800" height="40" font="font:MediumSystemFont" color="0xFFFFFFFF" />
     <Poster id="image" translation="[14,4]" width="800" height="48" loadDisplayMode="scaleToFit" />
   </children>

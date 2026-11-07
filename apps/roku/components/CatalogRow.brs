@@ -3,6 +3,10 @@ sub init()
     m.image = m.top.FindNode("image")
 end sub
 
+sub updateFocus()
+    m.top.FindNode("focus").opacity = m.top.focusPercent
+end sub
+
 sub showContent()
     item = m.top.itemContent
     if item = invalid then return
