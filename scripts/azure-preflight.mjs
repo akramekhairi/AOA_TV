@@ -8,14 +8,14 @@ try {
   const subscription = await arm(`${base}?api-version=2022-12-01`);
   checkSubscription(subscription);
   const [skus, locations, policies] = await Promise.all([
-    Promise.all(['canadacentral','eastus'].map(region=>allArm(`${base}/providers/Microsoft.Compute/skus?api-version=2021-07-01&$filter=${encodeURIComponent("location eq '"+region+"'")}`))).then(results=>results.flat()),
+    Promise.all(['canadacentral','eastus','northcentralus'].map(region=>allArm(`${base}/providers/Microsoft.Compute/skus?api-version=2021-07-01&$filter=${encodeURIComponent("location eq '"+region+"'")}`))).then(results=>results.flat()),
     allArm(`${base}/locations?api-version=2022-12-01`),
     allArm(`${base}/providers/Microsoft.Authorization/policyAssignments?api-version=2022-06-01`)
   ]);
   console.log('Read spending limit, regional SKU availability and policy assignments.');
   const candidates = [];
   const ancillaryRetailPrices = {};
-  for (const region of ['canadacentral', 'eastus']) {
+  for (const region of ['canadacentral', 'eastus', 'northcentralus']) {
     console.log('Reading '+region+' disk, IP and bandwidth prices.');
     ancillaryRetailPrices[region] = {
       disk: await retail(`serviceName eq 'Storage' and armRegionName eq '${region}' and productName eq 'Standard SSD Managed Disks' and priceType eq 'Consumption'`),
@@ -23,7 +23,7 @@ try {
       bandwidth: await retail(`serviceName eq 'Bandwidth' and armRegionName eq '${region}' and priceType eq 'Consumption'`)
     };
   }
-  for (const size of ['Standard_B1s', 'Standard_B2ats_v2']) for (const region of ['canadacentral', 'eastus']) {
+  for (const size of ['Standard_B1s', 'Standard_B2ats_v2']) for (const region of ['canadacentral', 'eastus', 'northcentralus']) {
     const sku = skus.find(s => s.resourceType === 'virtualMachines' && s.name === size && s.locations?.some(location => location.toLowerCase() === region));
     const caps = Object.fromEntries((sku?.capabilities || []).map(c => [c.name, c.value]));
     const restrictions = (sku?.restrictions || []).filter(r => r.type === 'Location' && (!r.values?.length || r.values.some(location => location.toLowerCase() === region)));

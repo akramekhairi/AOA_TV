@@ -1,9 +1,11 @@
 const legacyOrigin = 'https://aoa-tv-api.onrender.com';
+const azureOrigin = 'https://aoa-tv-akramekhairi.northcentralus.cloudapp.azure.com';
+const trustedOrigins = [legacyOrigin, azureOrigin];
 export const tokenKey = (base: string) => `aoa.token:${base}`;
 
 export function configuredOrigin(env: {VITE_API_URL?: string; VITE_API_BASE_URL?: string}): string {
-  const value = (env.VITE_API_URL || env.VITE_API_BASE_URL || legacyOrigin).trim();
-  if(!value) return legacyOrigin;
+  const value = (env.VITE_API_URL || env.VITE_API_BASE_URL || azureOrigin).trim();
+  if(!value) return azureOrigin;
   const url = new URL(value);
   if(url.username || url.password || url.search || url.hash || !['http:', 'https:'].includes(url.protocol)
     || (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) {
@@ -16,17 +18,10 @@ export function pairedToken(storage: Pick<Storage, 'getItem'|'setItem'|'removeIt
   // Only this known deployment shares device state with the configured service.
   // Never use a saved arbitrary backend to choose where credentials are sent.
   storage.removeItem('aoa.backend');
-  const current = storage.getItem(tokenKey(base));
-  if(current) {
-    if(base !== legacyOrigin) storage.removeItem(tokenKey(legacyOrigin));
-    return current;
-  }
-  if(!base || base === legacyOrigin) return '';
-  const legacy = storage.getItem(tokenKey(legacyOrigin));
-  if(!legacy) return '';
-  storage.setItem(tokenKey(base), legacy);
-  storage.removeItem(tokenKey(legacyOrigin));
-  return legacy;
+  const token = storage.getItem(tokenKey(base)) || trustedOrigins.filter(origin=>origin!==base).map(origin=>storage.getItem(tokenKey(origin))).find(Boolean) || '';
+  if(token) storage.setItem(tokenKey(base),token);
+  for(const origin of trustedOrigins)if(origin!==base)storage.removeItem(tokenKey(origin));
+  return token;
 }
 
 export function phoneName(value: string): string {

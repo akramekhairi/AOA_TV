@@ -13,7 +13,7 @@ node scripts/azure-preflight.mjs YOUR_SUBSCRIPTION_UUID
 Copy-Item infra/azure/approval.example.json .local/azure-approval.json
 ```
 
-Preflight performs read-only ARM and public Retail Prices API requests. It writes `.local/azure-preflight.json` with subscription spending-limit state, quota, x86 SKU restrictions, policy assignment references, and price meter candidates. Preference order is B1s Canada Central, B1s East US, B2ats_v2 Canada Central, B2ats_v2 East US. Availability is a snapshot, not a capacity reservation. A listed region is not proof that effective inherited policy permits deploying there. Inspect inherited policies and their definitions in the portal before approving a region. Missing permissions or ambiguous price meters block deployment.
+Preflight performs read-only ARM and public Retail Prices API requests. It writes `.local/azure-preflight.json` with subscription spending-limit state, quota, x86 SKU restrictions, policy assignment references, and price meter candidates. Initial targets are Canada Central/East US; the current account restricts those SKUs. The user approved North Central US B2ats_v2 after quota, policy and availability checks. Availability is a snapshot, not a capacity reservation. A listed region is not proof that effective inherited policy permits deploying there. Inspect inherited policies and their definitions in the portal before approving a region. Missing permissions or ambiguous price meters block deployment.
 
 Complete `.local/azure-approval.json` privately with evidence from this account. Use fresh verification timestamps (under 24 hours) and project the entire remaining first year, with a minimum 330-day horizon for this newly activated account. The verified credit expiry must cover that horizon; do not shorten it to make an unaffordable monthly estimate pass. Account for all other subscription consumption and reserve at least 20% of remaining credit: with $100 available, the entire projected deployment and other subscription usage must fit within $80. Set `firstYearCostVerified` and approval only after reviewing these totals. Use the full Linux retail compute price unless account-specific evidence identifies the exact selected SKU, remaining monthly free hours, benefit start/end dates, and projected charged hours over the remaining first year. B2ats_v2 is not automatically a free replacement for B1s.
 
@@ -22,7 +22,7 @@ Set `projectedDays` to the remaining whole days until verified credit expiry (at
 The all-in estimate must include:
 
 * Linux VM hourly price × projected running hours, less only verified allowance.
-* One 32 GiB Standard SSD LRS E4 disk, including transactions. A free disk benefit for a different disk type cannot be assumed to cover it.
+* One64GiB Premium_LRS P6 disk. The current deployment uses the account-confirmed first-year P6 allowance (one of two free64GB disks); verify it before assuming zero disk cost.
 * One Standard static public IPv4 address for the whole period, including time the VM is deallocated.
 * Expected catalog, image, and subtitle outbound transfer, applicable account allowances, and overage. Video streams directly from the provider rather than through this Azure app; estimate Azure bandwidth from the traffic it actually serves.
 * Other subscription resources and applicable tax/currency effects.
@@ -92,3 +92,11 @@ Configure Azure Cost Management budget alerts (for example 50%, 80%, and 95% of 
 Stopping Linux inside the guest does not deallocate the VM. Use Azure **Stop (deallocate)** to stop compute billing; the disk and static IPv4 can keep accruing cost. Once data/configuration and rollback are secured, deleting the dedicated resource group removes the VM, disk, and IP. Review the group's contents before deleting it. Do not rely on student renewal to extend the VM free period, and do not remove the spending limit to keep the app running.
 
 Official references: [Azure for Students offer](https://azure.microsoft.com/en-us/pricing/offers/ms-azr-0170p/), [Retail Prices API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices), [SKU availability troubleshooting](https://learn.microsoft.com/en-us/azure/azure-resource-manager/troubleshooting/error-sku-not-available), [Azure spending limit](https://learn.microsoft.com/en-us/azure/cost-management-billing/manage/spending-limit), and [Cost Management budgets](https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/tutorial-acm-create-budgets).
+
+## Current deployment evidence
+
+The user activated the student subscription on2026-11-08 with$100/$100credit and supplied the portal free-service table listing Linux B2ats_v2 750hours/month and two64GB P6 SSDs for12months. The dedicated user-created AOA_TV resource group has metadata in EastUS; the VM runs in NorthCentralUS. The inherited ABN-tag policy is DoNotEnforce; no billing number was invented.
+
+The estimate is$43.80/year for StandardIPv4 at$.005/hour, plus$1 incidental allowance. VM hours(max744/month) and oneP6 disk fit verified first-year allowances. Forecast$44.80 leaves$55.20 of credit, exceeding the20%reserve. Credit/benefit end is conservatively recorded as2027-11-08T00:00Z from fresh activation; verify the exact sponsorship timestamp and review before that date. These first-year allowances do not automatically renew with student credit.
+
+Public endpoint: https://aoa-tv-akramekhairi.northcentralus.cloudapp.azure.com . Runtime image is pinned to a public GHCR digest, with private settings under/opt/aoa-tv. Only ports80/443 and SSH from the configured administrative IPv4 are allowed. TRUST_PROXY=loopback,172.16.0.0/12 trusts only the local Docker proxy for client rate limits.

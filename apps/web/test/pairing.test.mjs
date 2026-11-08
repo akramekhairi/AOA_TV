@@ -16,7 +16,7 @@ function storage(values={}) {const data=new Map(Object.entries(values));return {
 test('deployment configuration takes precedence and supports the legacy build variable',()=>{
   assert.equal(configuredOrigin({VITE_API_URL:'https://current.test/api/v1/',VITE_API_BASE_URL:legacy}),'https://current.test');
   assert.equal(configuredOrigin({VITE_API_BASE_URL:legacy}),legacy);
-  assert.equal(configuredOrigin({}),legacy);
+  assert.equal(configuredOrigin({}),'https://aoa-tv-akramekhairi.northcentralus.cloudapp.azure.com');
   for(const value of ['https://user:secret@host.test','javascript:alert(1)','https://host.test?token=x','http://remote.test']) assert.throws(()=>configuredOrigin({VITE_API_URL:value}));
 });
 test('known Render pairing migrates once to configured origin and logout stays logged out',()=>{
@@ -33,6 +33,11 @@ test('arbitrary saved backend cannot redirect requests or migrate its credential
   assert.equal(pairedToken(store,base),'');assert.equal(store.getItem(tokenKey(base)),null);
   const current=storage({[tokenKey(base)]:'current',[tokenKey(legacy)]:'stale'});
   assert.equal(pairedToken(current,base),'current');assert.equal(current.getItem(tokenKey(legacy)),null);
+});
+test('trusted Azure rollback preserves pairing without reviving it after logout',()=>{
+  const azure='https://aoa-tv-akramekhairi.northcentralus.cloudapp.azure.com';const store=storage({[tokenKey(azure)]:'device-token'});
+  assert.equal(pairedToken(store,legacy),'device-token');assert.equal(store.getItem(tokenKey(azure)),null);
+  store.removeItem(tokenKey(legacy));assert.equal(pairedToken(store,legacy),'');
 });
 test('phone names require actual input and preserve intentional internal spacing',()=>{
   assert.equal(phoneName('  Family phone  '),'Family phone');

@@ -8,6 +8,7 @@ export async function jsonFetch(url:string, init:RequestInit={}) { const respons
 export class Catalog {
   private items=new Map<string,ContentItem>(); private categories:Category[]=[]; private expires=0; private loading?:Promise<void>; private episodes=new Map<string,{expires:number;items:ContentItem[]}>();private hydrated=new Set<string>();
   private ttl=24*60*60_000; private forceRefresh=false;
+  private storedTopReady=false; private storedTopLoading?:Promise<void>;
   constructor(private config:Config,private store?:Store) {}
   private async provider(action:string, extra:Record<string,string>={}) {
     const url=new URL(this.config.xtreamUrl+'/player_api.php');Object.entries({username:this.config.xtreamUser,password:this.config.xtreamPassword,action,...extra}).forEach(([k,v])=>url.searchParams.set(k,v));
@@ -25,7 +26,7 @@ export class Catalog {
       if(result.error)throw new HttpError(503,'Catalog cache unavailable');
       if(result.data&&Date.parse(result.data.updated_at)+this.ttl>Date.now()){
         this.items=new Map((result.data.payload.items as ContentItem[]).map(item=>[item.id,item]));
-        this.categories=result.data.payload.categories as Category[];this.expires=Date.parse(result.data.updated_at)+this.ttl;return;
+        this.categories=result.data.payload.categories as Category[];this.expires=Date.parse(result.data.updated_at)+this.ttl;this.storedTopReady=true;return;
       }
     }
     if(this.config.demo) {
@@ -45,7 +46,7 @@ export class Catalog {
       this.items=map;this.hydrated.clear();this.categories=results.flatMap(result=>result.categories);
       if(this.store?.client){const saved=await this.store.client.from('aoa_catalog').upsert({id:'top',payload:{items:[...map.values()],categories:this.categories},updated_at:new Date().toISOString()});if(saved.error)throw new HttpError(503,'Catalog cache unavailable');}
     }
-    this.expires=Date.now()+this.ttl;
+    this.expires=Date.now()+this.ttl;this.storedTopReady=true;
   }
   private map(row:any,type:MediaType):ContentItem {
     const providerId=String(type==='series'?row.series_id:row.stream_id??row.id);
@@ -64,9 +65,22 @@ export class Catalog {
     const local=this.items.get(id);if(local)return local;
     if(!this.store?.client)return undefined;
     if(id.startsWith('xtream:episode:')){const result=await this.store.client.from('aoa_content').select('payload').eq('id',id).maybeSingle();if(result.error)throw new HttpError(503,'Catalog metadata storage unavailable');if(result.data){const item=result.data.payload as ContentItem;this.items.set(id,item);return item;}return undefined;}
-    const result=await this.store.client.from('aoa_catalog').select('payload').eq('id','top').maybeSingle();if(result.error)throw new HttpError(503,'Catalog cache unavailable');
-    for(const item of (result.data?.payload.items||[]) as ContentItem[])if(!this.items.has(item.id))this.items.set(item.id,item);
+    await this.loadStoredTop();
     return this.items.get(id);
+  }
+  private async loadStoredTop():Promise<void> {
+    if(this.storedTopReady||!this.store?.client)return;
+    if(this.storedTopLoading)return this.storedTopLoading;
+    // Favorites and progress resolve many IDs in parallel. Download the persisted
+    // snapshot once, including when the requested IDs are absent. This path must
+    // never trigger a provider refresh or metadata hydration.
+    this.storedTopLoading=(async()=>{
+      const result=await this.store!.client!.from('aoa_catalog').select('payload').eq('id','top').maybeSingle();
+      if(result.error)throw new HttpError(503,'Catalog cache unavailable');
+      for(const item of (result.data?.payload.items||[]) as ContentItem[])if(!this.items.has(item.id))this.items.set(item.id,item);
+      this.storedTopReady=true;
+    })().finally(()=>{this.storedTopLoading=undefined;});
+    return this.storedTopLoading;
   }
   async storedEpisodes(seriesId:string):Promise<ContentItem[]> {
     if(this.config.demo)return this.seriesEpisodes(seriesId);
