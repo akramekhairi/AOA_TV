@@ -18,7 +18,7 @@ function number(value:unknown,label:string,min=0,max=604800){if(typeof value!=='
 function contentId(value:unknown){if(typeof value!=='string'||!/^xtream:(live|movie|series|episode):[a-zA-Z0-9_-]+$/.test(value))throw new HttpError(400,'Invalid content ID');return value;}
 const commandView=(command:PlaybackCommand):PlaybackCommand=>command.status==='pending'&&Date.parse(command.expiresAt)<=Date.now()?{...command,status:'expired'}:command;
 function issue(state:State,input:{action:CommandAction;contentId?:string;position?:number;subtitleId?:string|null;offset?:number}) {
-  if(input.action==='play'){for(const prior of Object.values(state.commands))if(prior.status==='pending')prior.status='expired';state.activeSession=randomUUID();state.activeContentId=input.contentId;}
+  if(input.action==='play'){for(const prior of Object.values(state.commands))if(prior.status==='pending')prior.status='expired';state.activeSession=randomUUID();state.activeContentId=input.contentId;if(input.contentId&&state.hiddenProgress)delete state.hiddenProgress[input.contentId];}
   if(!state.activeSession)throw new HttpError(409,'No playback session');
   const command:PlaybackCommand={id:randomUUID(),...input,sessionId:state.activeSession,expiresAt:new Date(Date.now()+60000).toISOString(),status:'pending'};
   state.commands[command.id]=command;
@@ -80,11 +80,15 @@ export async function createApp(config:Config) {
   app.get(base+'/progress',{preHandler:auth},async()=>{
     const state=await store.read();const items=[];const nextIds=new Set<string>();
     for(const progress of Object.values(state.progress).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,100)) {
+      if(state.hiddenProgress?.[progress.contentId])continue;
       let item=progress.item;try{item=item||await catalog.stored(progress.contentId);}catch{continue;}if(!item)continue;
       if(!progress.completed&&progress.position>0)items.push({...progress,item:assets.decorate(item)});
-      if(progress.completed&&item.type==='episode'&&item.seriesId){try{const episodes=await catalog.storedEpisodes(item.seriesId);const index=episodes.findIndex(e=>e.id===item.id);const next=index>=0?episodes[index+1]:undefined;if(next&&!state.progress[next.id]?.completed&&!nextIds.has(next.id)){nextIds.add(next.id);const p=state.progress[next.id]||{contentId:next.id,position:0,duration:0,completed:false,updatedAt:progress.updatedAt};if(!p.position)items.push({...p,item:assets.decorate(next)});}}catch{/* One unavailable series cannot hide other progress. */}}
+      if(progress.completed&&item.type==='episode'&&item.seriesId){try{const episodes=await catalog.storedEpisodes(item.seriesId);const index=episodes.findIndex(e=>e.id===item.id);const next=index>=0?episodes[index+1]:undefined;if(next&&!state.hiddenProgress?.[next.id]&&!state.progress[next.id]?.completed&&!nextIds.has(next.id)){nextIds.add(next.id);const p=state.progress[next.id]||{contentId:next.id,position:0,duration:0,completed:false,updatedAt:progress.updatedAt};if(!p.position)items.push({...p,item:assets.decorate(next)});}}catch{/* One unavailable series cannot hide other progress. */}}
     }
     return {items};
+  });
+  app.delete<{Params:{id:string}}>(base+'/progress/:id',{preHandler:auth},async req=>{
+    const id=contentId(req.params.id);await store.change(state=>{state.hiddenProgress??={};state.hiddenProgress[id]=timestamp();});return {ok:true};
   });
   app.get(base+'/tv/status',{preHandler:auth},async()=>{
     const state=await store.read();const device=rokuPresence&&state.devices[rokuPresence.deviceId];

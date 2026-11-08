@@ -16,6 +16,7 @@ Base `/api/v1`. JSON requests/responses; authenticated requests use `Authorizati
 - POST `/catalog/refresh` → `{ok:true}`.
 - GET `/favorites` → `{items:ContentItem[]}`; PUT `/favorites/:id` and DELETE `/favorites/:id` → `{ok:true}`.
 - GET `/progress` → `{items:Progress[]}` (in-progress and next episodes).
+- DELETE `/progress/:id` → `{ok:true}` hides that item from the shared Continue Watching list, retaining its resume position. Ongoing progress reports keep it hidden; explicitly playing it again restores it to the list.
 
 ## Playback and status
 - GET `/tv/status` → TvStatus.

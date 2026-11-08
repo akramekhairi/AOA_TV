@@ -62,3 +62,28 @@ test('Roku-issued playback saves progress without hydration and resumes five sec
   assert.equal((await call('POST','/commands',{action:'play',contentId:'xtream:movie:2'})).json().position,35);
   assert.equal((await call('POST','/commands',{action:'play',contentId:'xtream:movie:2',position:0})).json().position,0);
 });
+
+test('removing Continue Watching is shared, survives heartbeats, hides next episodes and preserves resume',async t=>{
+  const {app,store}=await createApp(settings);t.after(()=>app.close());
+  const enrolled=await app.inject({method:'POST',url:'/api/v1/admin/enroll',headers:{'x-admin-key':settings.adminKey},payload:{name:'Roku'}});
+  const roku=enrolled.json().token;
+  const call=(method:any,url:string,token?:string,payload?:any)=>app.inject({method,url:'/api/v1'+url,headers:token?{authorization:`Bearer ${token}`}:{},payload});
+  const pair=async(name:string)=>{const {code}=(await call('POST','/pairing/code',roku)).json();return (await call('POST','/pairing/claim',undefined,{code,name})).json().token;};
+  const phone=await pair('Phone one'),secondPhone=await pair('Phone two'),id='xtream:movie:2';
+  const command=(await call('POST','/commands',phone,{action:'play',contentId:id})).json();
+  const progress={contentId:id,sessionId:command.sessionId,position:40,duration:100,completed:false};
+  assert.equal((await call('PUT','/roku/progress',roku,progress)).statusCode,200);
+  assert.equal((await call('DELETE','/progress/'+id)).statusCode,401);
+  assert.equal((await call('DELETE','/progress/'+id,phone)).statusCode,200);
+  assert.equal((await call('DELETE','/progress/'+id,phone)).statusCode,200);
+  await call('PUT','/roku/progress',roku,{...progress,position:45});
+  for(const token of [phone,secondPhone,roku])assert.equal((await call('GET','/progress',token)).json().items.length,0);
+  assert.equal((await store.read()).progress[id].position,45);
+  assert.equal((await call('POST','/commands',secondPhone,{action:'play',contentId:id})).json().position,40);
+  assert.equal((await call('GET','/progress',phone)).json().items.length,1);
+  const episode=(await call('POST','/commands',phone,{action:'play',contentId:'xtream:episode:31'})).json();
+  await call('PUT','/roku/progress',roku,{contentId:'xtream:episode:31',sessionId:episode.sessionId,position:100,duration:100,completed:true});
+  assert.ok((await call('GET','/progress',phone)).json().items.some((p:any)=>p.contentId==='xtream:episode:32'));
+  await call('DELETE','/progress/xtream:episode:32',phone);
+  assert.ok(!(await call('GET','/progress',secondPhone)).json().items.some((p:any)=>p.contentId==='xtream:episode:32'));
+});

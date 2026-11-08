@@ -6,6 +6,7 @@ export interface State {
   pairings: Record<string, {expiresAt:string; rokuId:string}>;
   commands: Record<string, PlaybackCommand>;
   favorites: string[]; progress: Record<string,Progress>; subtitles: Record<string,{id:string|null;offset:number}>;
+  hiddenProgress?: Record<string,string>;
   tv: TvStatus; activeSession?: string; activeContentId?:string;
 }
 const initial = (): State => ({devices:{},pairings:{},commands:{},favorites:[],progress:{},subtitles:{},tv:{online:false,state:'idle'}});
