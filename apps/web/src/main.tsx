@@ -2,6 +2,7 @@ import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import type {CatalogPage, Category, ContentItem, Device, PlaybackCommand, Progress, SubtitleResult, TvStatus, CommandAction} from '@aoa/shared';
 import {ApiError, request} from './api';
+import {revalidate} from './reconnect';
 import {backendUrl, clock, safeImage} from './utils';
 import './style.css';
 
@@ -25,20 +26,29 @@ function App() {
   const session = useRef(new AbortController()); const detail = useRef(new AbortController());
   const logout = useCallback(() => { session.current.abort(); session.current = new AbortController(); localStorage.removeItem(tokenKey(base)); setToken(''); setSelected(undefined); setTv(undefined); setCatalog({items:[],page:1,pageSize:30,total:0}); setFavorites([]); setProgress([]); }, [base]);
   const api = useCallback(async <T,>(path: string, options: RequestInit = {}, signal?: AbortSignal) => {
-    try { return await request<T>(base, token, path, options, signal ? AbortSignal.any([signal, session.current.signal]) : session.current.signal); }
-    catch(e) { if(e instanceof ApiError && [401,403].includes(e.status)) logout(); throw e; }
+    const activeSignal = signal ? AbortSignal.any([signal, session.current.signal]) : session.current.signal;
+    try { return await request<T>(base, token, path, options, activeSignal); }
+    catch(e) { if(!activeSignal.aborted && e instanceof ApiError && e.invalidCredentials) logout(); throw e; }
   }, [base, token, logout]);
   const fail = (e: unknown) => { if(e instanceof Error && e.name !== 'AbortError') setError(e.message); };
   const run = async (fn: () => Promise<void>) => { setBusy(true); setError(''); try { await fn(); } catch(e) { fail(e); } finally { setBusy(false); } };
   useEffect(() => { const id = setTimeout(() => setDebounced(query), 300); return () => clearTimeout(id); }, [query]);
-  useEffect(() => { if(!token) return; const controller = new AbortController(); api<{categories:Category[]}>(`/categories${type?'?type='+type:''}`, {}, controller.signal).then(r => setCategories(r.categories)).catch(fail); return () => controller.abort(); }, [api, token, type]);
+  useEffect(() => { if(!token) return; const controller = new AbortController(); api<{categories:Category[]}>(`/categories${type?'?type='+type:''}`, {}, controller.signal).then(r => setCategories(r.categories)).catch(fail); return () => controller.abort(); }, [api, token, type, revision]);
   useEffect(() => { if(!token || tab !== 'browse') return; const controller = new AbortController(); setLoading(true); setError(''); api<CatalogPage>(`/catalog?${new URLSearchParams({type,q:debounced,categoryId:category,page:String(page),pageSize:'30'})}`, {}, controller.signal).then(setCatalog).catch(fail).finally(() => { if(!controller.signal.aborted) setLoading(false); }); return () => controller.abort(); }, [api, token, tab, type, debounced, category, page, revision]);
   useEffect(() => { if(!token) return; const controller = new AbortController(); Promise.all([api<{items:ContentItem[]}>('/favorites', {}, controller.signal), api<{items:Progress[]}>('/progress', {}, controller.signal)]).then(([f,p]) => {setFavorites(f.items); setProgress(p.items);}).catch(fail); return () => controller.abort(); }, [api, token, revision, tab]);
   useEffect(() => {
-    if(!token) return; const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => { if(document.hidden || controller.signal.aborted) return; try { const [status,f,p]=await Promise.all([api<TvStatus>('/tv/status', {}, controller.signal),api<{items:ContentItem[]}>('/favorites',{},controller.signal),api<{items:Progress[]}>('/progress',{},controller.signal)]);setTv(status);setFavorites(f.items);setProgress(p.items); } catch(e) { fail(e); } if(!controller.signal.aborted) timer = setTimeout(poll, 10000); };
-    const visible = () => { clearTimeout(timer); if(!document.hidden) void poll(); };
-    void poll(); document.addEventListener('visibilitychange', visible); return () => { controller.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', visible); };
+    if(!token) return;
+    let recovering = false;
+    return revalidate(async signal => {
+      const status = await api<TvStatus>('/tv/status', {}, signal);
+      setTv(status);
+      if(recovering) { recovering = false; setError(''); setRevision(n=>n+1); }
+      // Catalog/provider failures must never discard a healthy TV heartbeat.
+      await Promise.all([
+        api<{items:ContentItem[]}>('/favorites', {}, signal).then(f=>setFavorites(f.items)).catch(fail),
+        api<{items:Progress[]}>('/progress', {}, signal).then(p=>setProgress(p.items)).catch(fail),
+      ]);
+    }, e => { recovering = true; setTv(undefined); fail(e); }, () => { recovering = true; setTv(undefined); });
   }, [api, token]);
   useEffect(() => { setSeek(String(Math.floor(tv?.position || 0))); }, [tv?.position]);
   useEffect(() => { const close = (event: KeyboardEvent) => { if(event.key === 'Escape') setSelected(undefined); }; window.addEventListener('keydown', close); return () => window.removeEventListener('keydown', close); }, []);
@@ -46,7 +56,8 @@ function App() {
   const pair = () => run(async () => { const value = backendUrl(baseInput); const result = await request<{token:string;device:Device}>(value,'','/pairing/claim',{method:'POST',body:JSON.stringify({code:code.trim().toUpperCase(),name:name.trim() || 'My phone'})}); session.current.abort(); session.current = new AbortController(); localStorage.setItem('aoa.backend',value); localStorage.setItem(tokenKey(value),result.token); setBase(value); setToken(result.token); setCode(''); setNotice('Phone paired. Choose something to watch.'); });
   const open = (item: ContentItem) => { detail.current.abort(); detail.current = new AbortController(); const signal = detail.current.signal; setSelected(item); setEpisodes([]); setSubs([]); setSuggestion(''); setSubtitleId(''); setOffset(0); setSubQuery(item.title); setSeason(''); api<ContentItem>(`/content/${encodeURIComponent(item.id)}`,{},signal).then(setSelected).catch(fail); if(item.type === 'series') api<{items:ContentItem[]}>(`/series/${encodeURIComponent(item.id)}/episodes`,{},signal).then(r => {setEpisodes(r.items);setSeason(String(r.items[0]?.season ?? 1));}).catch(fail); };
   const command = (action: CommandAction, contentId?: string, position?: number) => run(async () => {
-    if(!tv?.online) throw new Error('TV is offline. Open AOA TV on your Roku, then try again. A sleeping TV cannot receive commands.');
+    const status = await api<TvStatus>('/tv/status'); setTv(status);
+    if(!status.online) throw new Error('TV is offline. Open AOA TV on your Roku, then try again. A sleeping TV cannot receive commands.');
     let cmd = await api<PlaybackCommand>('/commands',{method:'POST',body:JSON.stringify({action,contentId,position})}); setNotice('Waiting for TV…');
     const started = Date.now();
     while(cmd.status === 'pending' && Date.now() - started < 30000) { await new Promise<void>((resolve,reject) => {const signal=session.current.signal; const id=setTimeout(() => {signal.removeEventListener('abort',abort);resolve();},1000); const abort=()=>{clearTimeout(id);reject(new DOMException('Cancelled','AbortError'));}; signal.addEventListener('abort',abort,{once:true});}); cmd = await api<PlaybackCommand>(`/commands/${encodeURIComponent(cmd.id)}`); }
@@ -60,7 +71,7 @@ function App() {
   const card = (item:ContentItem, p?:Progress) => <article className="card" key={item.id}><button className="poster" onClick={()=>open(item)} aria-label={`Open ${item.title}`}>{safeImage(item.poster)?<img loading="lazy" src={safeImage(item.poster)} alt="" onError={e=>{e.currentTarget.style.display='none';}}/>:<span className="placeholder">{item.type==='live'?'◉':'▷'}</span>}<span className="badge">{item.type}</span>{p && <progress value={p.position} max={p.duration || 1}/>}</button><button className="card-title" onClick={()=>open(item)}>{title(item)}</button><div className="meta">{p?`${clock(p.position)} watched`:item.year || 'Ready on your TV'}<button className="star" aria-label={favorites.some(f=>f.id===item.id)?'Remove favorite':'Add favorite'} disabled={busy} onClick={()=>favorite(item)}>{favorites.some(f=>f.id===item.id)?'♥':'♡'}</button></div></article>;
   const currentProgress = progress.find(p=>p.contentId===selected?.id);
   const shown = tab === 'favorites'?favorites:tab === 'continue'?progress.filter(p=>p.item).map(p=>p.item!):catalog.items;
-  return <div className="app"><header><a className="brand" href={import.meta.env.BASE_URL}><span className="logo">▷</span> AOA<span>TV</span></a><div className={`connection ${tv?.online?'online':''}`}><i/>{token?(tv?.online?'TV online':'TV offline'):'Phone remote'}</div></header>
+  return <div className="app"><header><a className="brand" href={import.meta.env.BASE_URL}><span className="logo">▷</span> AOA<span>TV</span></a><div className={`connection ${tv?.online?'online':''}`}><i/>{token?(tv ? (tv.online?'TV online':'TV offline') : 'Reconnecting…'):'Phone remote'}</div></header>
     {error && <div role="alert" className="message error">{error}<button onClick={()=>setError('')} aria-label="Dismiss error">×</button></div>}{notice && <div role="status" className="message">{notice}<button onClick={()=>setNotice('')} aria-label="Dismiss notice">×</button></div>}
     {!token?<main className="pair"><div className="eyebrow">YOUR NEXT WATCH STARTS HERE</div><h1>A little screen.<br/><em>A bigger experience.</em></h1><p>Browse on your phone. Watch on your Roku.</p><section className="panel"><h2>Connect your phone</h2><p>Open AOA TV on your Roku and choose Pair phone. Enter the code shown on your television.</p><form onSubmit={e=>{e.preventDefault();void pair();}}><label>Backend address<input type="url" required placeholder="https://your-backend.example" value={baseInput} onChange={e=>setBaseInput(e.target.value)}/></label><label>Phone name<input maxLength={80} value={name} onChange={e=>setName(e.target.value)}/></label><label>Pairing code<input className="code" required autoCapitalize="characters" autoComplete="off" maxLength={20} placeholder="TV CODE" value={code} onChange={e=>setCode(e.target.value)}/></label><button className="primary" disabled={busy}>{busy?'Connecting…':'Pair with TV →'}</button></form><small>Codes expire after five minutes. Your device token stays on this phone.</small></section></main>:<>
     <nav aria-label="Main navigation">{(['browse','continue','favorites','settings'] as Tab[]).map(t=><button key={t} className={tab===t?'active':''} onClick={()=>setTab(t)}>{({browse:'Explore',continue:'Continue',favorites:'Favorites',settings:'Settings'})[t]}</button>)}</nav>

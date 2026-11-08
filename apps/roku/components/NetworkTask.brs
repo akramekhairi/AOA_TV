@@ -90,6 +90,7 @@ sub finishRequest(event as object)
     data = ParseJson(event.GetString())
     response = {tag: pending.request.tag, ok: code >= 200 and code < 300, code: code, data: data, context: pending.request}
     if not response.ok
+        if pending.request.tag = "heartbeat" then print "AOA heartbeat failed, HTTP "; code
         if code <= 0 or code = 408 or code = 429 or code >= 500 then retryAcknowledgement(pending.request)
         response.error = "Backend unavailable. Check the URL, connection, and device token."
         if code = 401 or code = 403 then response.error = "Device token rejected or revoked. Update it in Settings."
@@ -124,7 +125,9 @@ sub tick()
     now = m.clock.TotalMilliseconds()
     expired = []
     for each key in m.pending
-        if now - m.pending[key].started > 8000 then expired.Push(key)
+        timeout = 15000
+        if m.pending[key].request.tag = "resolve" or m.pending[key].request.tag = "catalog" then timeout = 70000
+        if now - m.pending[key].started > timeout then expired.Push(key)
     end for
     for each key in expired
         pending = m.pending[key]

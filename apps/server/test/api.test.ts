@@ -17,8 +17,20 @@ test('pairing, isolation, queued sessions, progress, acknowledgements and Arabic
   const first=(await call('POST','/commands',phone.token,{action:'play',contentId:'xtream:movie:2',position:0})).json();assert.ok(first.sessionId);
   const pause=(await call('POST','/commands',phone.token,{action:'pause'})).json();assert.equal(pause.sessionId,first.sessionId);
   const second=(await call('POST','/commands',phone.token,{action:'play',contentId:'xtream:episode:31'})).json();assert.notEqual(first.sessionId,second.sessionId);
+  await call('POST','/roku/status',roku,{state:'playing',sessionId:second.sessionId,contentId:'xtream:episode:31',position:7});
+  await store.change(state=>{state.tv.updatedAt='2000-01-01T00:00:00.000Z';});
+  assert.equal((await call('GET','/tv/status',phone.token)).json().online,false);
   assert.equal((await call('PUT','/roku/progress',roku,{contentId:'xtream:movie:2',position:3,duration:20,completed:false,sessionId:first.sessionId})).statusCode,409);
   assert.equal((await call('POST','/roku/status',roku,{state:'playing',sessionId:first.sessionId})).statusCode,409);
+  const live=(await call('GET','/tv/status',phone.token)).json();assert.equal(live.online,true);assert.equal(live.sessionId,second.sessionId);assert.equal(live.position,7);
+  await store.change(state=>{state.tv.updatedAt='2000-01-01T00:00:00.000Z';});
+  const beforePoll=await store.read();assert.equal((await call('GET','/roku/commands',roku)).statusCode,200);
+  assert.equal((await call('GET','/tv/status',phone.token)).json().online,true);assert.deepEqual(await store.read(),beforePoll);
+  assert.equal((await call('POST','/roku/status',roku,{state:'idle'})).statusCode,200);
+  assert.equal((await call('GET','/tv/status',phone.token)).json().sessionId,second.sessionId);
+  const realNow=Date.now;const later=realNow()+31000;
+  try { Date.now=()=>later;assert.equal((await call('GET','/tv/status',phone.token)).json().online,false); }
+  finally { Date.now=realNow; }
   assert.equal((await call('PUT','/roku/progress',roku,{contentId:'xtream:episode:31',position:20,duration:20,completed:true,sessionId:second.sessionId})).statusCode,200);
   const progress=(await call('GET','/progress',phone.token)).json();assert.ok(progress.items.some((p:any)=>p.contentId==='xtream:episode:32'&&p.position===0));
   const playback=await call('GET',`/roku/playback/${second.id}`,roku);assert.equal(playback.statusCode,200);assert.ok(playback.json().url.startsWith('https:'));assert.equal((await call('GET',`/roku/playback/${second.id}`,phone.token)).statusCode,403);

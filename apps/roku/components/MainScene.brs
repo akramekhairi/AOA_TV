@@ -9,6 +9,7 @@ sub init()
     m.descriptionImage = m.top.FindNode("descriptionImage")
     m.hint = m.top.FindNode("hint")
     m.video = m.top.FindNode("video")
+    m.playingTitle = m.top.FindNode("playingTitle")
     m.net = m.top.FindNode("network")
     m.details = m.top.FindNode("details")
     m.detailButtons = m.top.FindNode("detailButtons")
@@ -639,7 +640,16 @@ sub resolveCommand(response as object)
     content = CreateObject("roSGNode", "ContentNode")
     content.url = playback.url
     content.streamFormat = format
-    content.title = "AOA TV"
+    ' Arabic is shaped by the backend image, never by the native Video HUD.
+    title = textValue(playback.item.title)
+    latinTitle = not CreateObject("roRegex", "[^ -~]", "").IsMatch(title)
+    content.title = ""
+    if latinTitle then content.title = title
+    m.top.FindNode("playingTitleImage").uri = textValue(playback.item.titleImage)
+    m.top.FindNode("playingTitleImage").visible = textValue(playback.item.titleImage) <> ""
+    m.top.FindNode("playingTitleText").visible = textValue(playback.item.titleImage) = ""
+    m.top.FindNode("playingTitleText").text = title
+    if not latinTitle then m.top.FindNode("playingTitleText").text = "Loading title..."
     content.HttpCertificatesFile = "common:/certs/ca-bundle.crt"
     content.live = playback.item.type = "live"
     if not content.live and playback.position > 0 then content.PlayStart = playback.position
@@ -657,6 +667,7 @@ sub resolveCommand(response as object)
     if m.top.dialog <> invalid then m.top.dialog.close = true
     m.video.content = content
     m.video.visible = true
+    m.playingTitle.visible = true
     m.video.SetFocus(true)
     m.awaitingPlay = command
     m.watchdog.control = "start"
@@ -676,6 +687,7 @@ sub playbackTimedOut()
     m.list.SetFocus(true)
     updateSnapshot(true)
     showMessage("Stream timed out", "The stream did not start within 25 seconds. Check the provider connection or try another title.")
+    m.playingTitle.visible = false
     finishCommand(command, false, "Stream did not reach playing state within 25 seconds.")
 end sub
 
@@ -688,6 +700,7 @@ sub videoPositionChanged()
 end sub
 
 sub videoStateChanged()
+    m.playingTitle.visible = m.video.visible and m.video.state <> "error" and m.video.state <> "finished" and m.video.state <> "stopped"
     if m.playback = invalid then return
     state = m.video.state
     m.playState = state
@@ -749,6 +762,7 @@ sub updateSnapshot(sendNow as boolean)
 end sub
 
 sub stopPlayback()
+    m.playingTitle.visible = false
     pending = m.awaitingPlay
     m.awaitingPlay = invalid
     m.watchdog.control = "stop"

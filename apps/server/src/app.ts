@@ -31,6 +31,7 @@ export async function createApp(config:Config) {
   await app.register(cors,{origin:config.corsOrigin,methods:['GET','POST','PUT','DELETE','OPTIONS'],allowedHeaders:['Authorization','Content-Type','X-Admin-Key']});
   await app.register(rateLimit,{max:240,timeWindow:'1 minute'});
   const store=new Store(config);await store.init();const catalog=new Catalog(config,store);const assets=new Assets(config,store,catalog);await assets.init();const subtitles=new Subtitles(config,assets);
+  let rokuPresence: {deviceId:string;at:number} | undefined;
   app.decorateRequest('device',null);
   const auth=async(req:FastifyRequest)=>{const token=req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];if(!token||token.length>200)throw new HttpError(401,'Device token required');const state=await store.read();const device=Object.values(state.devices).find(d=>!d.revoked&&safeEqual(d.tokenHash,hash(token)));if(!device)throw new HttpError(401,'Device token invalid or revoked');(req as any).device=cleanDevice(device);};
   const roku=async(req:FastifyRequest)=>{await auth(req);if((req as any).device.kind!=='roku')throw new HttpError(403,'Roku device required');};
@@ -67,7 +68,11 @@ export async function createApp(config:Config) {
     }
     return {items};
   });
-  app.get(base+'/tv/status',{preHandler:auth},async()=>{const state=await store.read();return {...state.tv,online:!!state.tv.updatedAt&&Date.parse(state.tv.updatedAt)>Date.now()-30000};});
+  app.get(base+'/tv/status',{preHandler:auth},async()=>{
+    const state=await store.read();const device=rokuPresence&&state.devices[rokuPresence.deviceId];
+    const seen=Math.max(Date.parse(state.tv.updatedAt||'')||0,device&&!device.revoked?rokuPresence!.at:0);
+    return {...state.tv,online:seen>Date.now()-30000};
+  });
   app.post(base+'/commands',{preHandler:auth},async req=>{
     const input=body(req);const actions:CommandAction[]=['play','pause','resume','stop','seek','subtitles'];if(!actions.includes(input.action))throw new HttpError(400,'Invalid action');
     let id:string|undefined;if(input.action==='play'){id=contentId(input.contentId);const item=await catalog.get(id);if(item.type==='series')throw new HttpError(400,'Choose an episode');}
@@ -79,7 +84,13 @@ export async function createApp(config:Config) {
     return store.change(state=>issue(state,{action:input.action,contentId:id||state.activeContentId,...(input.position!==undefined?{position:input.position}:input.action==='play'?{position:state.progress[id!]?.completed?0:state.progress[id!]?.position||0}:{})}));
   });
   app.get<{Params:{id:string}}>(base+'/commands/:id',{preHandler:auth},async req=>{const command=(await store.read()).commands[req.params.id];if(!command)throw new HttpError(404,'Command not found');return commandView(command);});
-  app.get(base+'/roku/commands',{preHandler:roku},async()=>({commands:Object.values((await store.read()).commands).map(commandView).filter(c=>c.status==='pending')}));
+  app.get(base+'/roku/commands',{preHandler:roku},async req=>{
+    const state=await store.read();
+    // Receiving commands proves reachability even if playback status is delayed.
+    // Keep high-frequency presence in memory; status heartbeats persist as usual.
+    rokuPresence={deviceId:(req as any).device.id,at:Date.now()};
+    return {commands:Object.values(state.commands).map(commandView).filter(c=>c.status==='pending')};
+  });
   app.post<{Params:{id:string}}>(base+'/roku/commands/:id/ack',{preHandler:roku},async req=>{
     const input=body(req);if(!['acknowledged','failed'].includes(input.status))throw new HttpError(400,'Invalid acknowledgement');await store.change(state=>{const command=state.commands[req.params.id];if(!command)throw new HttpError(404,'Command not found');if(command.status!=='pending')return;if(Date.parse(command.expiresAt)<=Date.now()){command.status='expired';return;}command.status=input.status;if(input.status==='failed')command.error=String(input.error||'Playback failed').slice(0,300);});return {ok:true};
   });
@@ -89,7 +100,17 @@ export async function createApp(config:Config) {
     return {item:assets.decorate(item),url:catalog.stream(item),streamFormat:item.type==='live'&&!config.demo?'hls':item.extension||'mp4',position:command.position??state.tv.position??0,sessionId:command.sessionId,subtitleUrl,warning};
   });
   app.post(base+'/roku/status',{preHandler:roku},async req=>{
-    const input=body(req);if(typeof input.state!=='string'||!['idle','buffering','playing','paused','stopped','finished','error'].includes(input.state))throw new HttpError(400,'Invalid playback state');if(input.position!==undefined)number(input.position,'position');if(input.duration!==undefined)number(input.duration,'duration');await store.change(state=>{if(state.activeSession&&!input.sessionId&&input.state==='idle'){state.tv.updatedAt=timestamp();state.tv.online=true;return;}if(state.activeSession&&input.sessionId!==state.activeSession)throw new HttpError(409,'Stale playback session');if(input.contentId&&input.contentId!==state.activeContentId)throw new HttpError(409,'Content does not match session');state.tv={online:true,state:input.state,contentId:state.activeContentId,position:input.position,duration:input.duration,sessionId:state.activeSession,updatedAt:timestamp()};});return {ok:true};
+    const input=body(req);if(typeof input.state!=='string'||!['idle','buffering','playing','paused','stopped','finished','error'].includes(input.state))throw new HttpError(400,'Invalid playback state');if(input.position!==undefined)number(input.position,'position');if(input.duration!==undefined)number(input.duration,'duration');
+    const conflict=await store.change(state=>{
+      // Liveness belongs to the authenticated Roku, independently of playback.
+      // A delayed report must not replace a newer session or make the TV offline.
+      state.tv.updatedAt=timestamp();state.tv.online=true;
+      if(state.activeSession&&!input.sessionId&&input.state==='idle')return;
+      if(state.activeSession&&input.sessionId!==state.activeSession)return 'Stale playback session';
+      if(input.contentId&&input.contentId!==state.activeContentId)return 'Content does not match session';
+      state.tv={online:true,state:input.state,contentId:state.activeContentId,position:input.position,duration:input.duration,sessionId:state.activeSession,updatedAt:timestamp()};
+    });
+    if(conflict)throw new HttpError(409,conflict);return {ok:true};
   });
   app.put(base+'/roku/progress',{preHandler:roku},async req=>{
     const input=body(req);const id=contentId(input.contentId);const position=number(input.position,'position'),duration=number(input.duration,'duration');if(typeof input.completed!=='boolean')throw new HttpError(400,'Completed boolean required');const item=await catalog.get(id);await store.change(state=>{if(input.sessionId!==state.activeSession||id!==state.activeContentId)throw new HttpError(409,'Stale playback session');if(item.type==='live')return;state.progress[id]={contentId:id,position:duration?Math.min(position,duration):position,duration,completed:input.completed||(duration>0&&position/duration>=0.95),updatedAt:timestamp()};const entries=Object.values(state.progress).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));for(const old of entries.slice(1000))delete state.progress[old.contentId];});return {ok:true};

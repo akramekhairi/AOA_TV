@@ -29,6 +29,10 @@ if(mode==='inspect'){
  const result=await render('/services','POST',{type:'web_service',name:'aoa-tv-api',ownerId:owners[0].id,repo:'https://github.com/akramekhairi/AOA_TV',branch:'main',autoDeployTrigger:'off',envVars,serviceDetails:{runtime:'docker',plan:'free',region:'virginia',numInstances:1,healthCheckPath:'/health',envSpecificDetails:{dockerfilePath:'./apps/server/Dockerfile',dockerContext:'.',dockerCommand:''}}});
  const service=result.service||result;await writeFile('.local/render-service.json',JSON.stringify(service));console.log(JSON.stringify({id:service.id,url:service.serviceDetails?.url,plan:service.serviceDetails?.plan}));
  }
+}else if(mode==='redeploy'){
+ const stored=JSON.parse(await readFile('.local/render-service.json','utf8'));
+ const result=await render('/services/'+stored.id+'/deploys','POST',{clearCache:'do_not_clear'});
+ console.log(JSON.stringify({id:result.id,status:result.status}));
 }else if(mode==='status'){
  const stored=JSON.parse(await readFile('.local/render-service.json','utf8'));const service=await render('/services/'+stored.id);const deploys=await render('/services/'+stored.id+'/deploys?limit=1');console.log(JSON.stringify({id:service.id,url:service.serviceDetails?.url,plan:service.serviceDetails?.plan,deploys:deploys.map(r=>({id:r.deploy?.id,status:r.deploy?.status}))}));
 }else throw new Error('Use inspect, migrate, deploy, or status');

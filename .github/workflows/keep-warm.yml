@@ -1,0 +1,21 @@
+name: Keep backend responsive
+on:
+  schedule:
+    - cron: '3,13,23,33,43,53 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: keep-backend-responsive
+  cancel-in-progress: false
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check the household backend
+        env:
+          API_URL: ${{ vars.VITE_API_URL }}
+        run: |
+          test -n "$API_URL"
+          curl --fail --silent --show-error --retry 1 --retry-delay 5 --max-time 70 "$API_URL/health"
