@@ -9,7 +9,6 @@ sub init()
     m.descriptionImage = m.top.FindNode("descriptionImage")
     m.hint = m.top.FindNode("hint")
     m.video = m.top.FindNode("video")
-    m.playingTitle = m.top.FindNode("playingTitle")
     m.net = m.top.FindNode("network")
     m.details = m.top.FindNode("details")
     m.detailButtons = m.top.FindNode("detailButtons")
@@ -42,6 +41,8 @@ sub init()
     m.mode = "settings"
     m.episodes = []
     m.reloadPaused = false
+    m.selectedSubtitleTrack = ""
+    m.selectSubtitleWhenAvailable = false
     m.currentPosition = 0
     m.currentDuration = 0
     root = CreateObject("roSGNode", "ContentNode")
@@ -56,6 +57,8 @@ sub init()
     m.detailButtons.ObserveField("itemSelected", "detailSelected")
     m.video.ObserveField("state", "videoStateChanged")
     m.video.ObserveField("position", "videoPositionChanged")
+    m.video.ObserveField("availableSubtitleTracks", "subtitleTracksChanged")
+    m.video.ObserveField("currentSubtitleTrack", "subtitleTrackChanged")
     m.watchdog.ObserveField("fire", "playbackTimedOut")
     m.net.ObserveField("response", "networkResponse")
     updateSnapshot(false)
@@ -710,36 +713,36 @@ sub resolveCommand(response as object)
     content = CreateObject("roSGNode", "ContentNode")
     content.url = playback.url
     content.streamFormat = format
-    ' Arabic is shaped by the backend image, never by the native Video HUD.
-    title = textValue(playback.item.title)
-    latinTitle = not CreateObject("roRegex", "[^ -~]", "").IsMatch(title)
-    content.title = ""
-    if latinTitle then content.title = title
-    m.top.FindNode("playingTitleImage").uri = textValue(playback.item.titleImage)
-    m.top.FindNode("playingTitleImage").visible = textValue(playback.item.titleImage) <> ""
-    m.top.FindNode("playingTitleText").visible = textValue(playback.item.titleImage) = ""
-    m.top.FindNode("playingTitleText").text = title
-    if not latinTitle then m.top.FindNode("playingTitleText").text = "Loading title..."
+    content.title = textValue(playback.item.title)
     content.HttpCertificatesFile = "common:/certs/ca-bundle.crt"
     content.live = playback.item.type = "live"
     if not content.live and playback.position > 0 then content.PlayStart = playback.position
-    if playback.subtitleUrl <> invalid and playback.subtitleUrl <> ""
-        content.SubtitleTracks = [{Language: "eng", Description: "Selected English subtitles", TrackName: playback.subtitleUrl}]
-        content.SubtitleConfig = {TrackName: playback.subtitleUrl}
-        m.video.globalCaptionMode = "On"
+    m.selectedSubtitleTrack = textValue(playback.subtitleUrl)
+    m.selectSubtitleWhenAvailable = m.selectedSubtitleTrack <> ""
+    if m.selectSubtitleWhenAvailable
+        ' Native metadata AA keys are case-sensitive; unquoted keys become lowercase.
+        content.SubtitleTracks = [{"Language": "eng", "Description": "Selected English subtitles", "TrackName": m.selectedSubtitleTrack}]
+        content.SubtitleConfig = {"TrackName": m.selectedSubtitleTrack}
     end if
     m.playback = playback
     m.lastSession = playback.sessionId
     m.lastContent = playback.item.id
     m.currentPosition = playback.position
-    m.currentDuration = 0
+    if not reloading then m.currentDuration = 0
     m.playState = "buffering"
     m.selectionSerial++
     m.details.visible = false
     if m.top.dialog <> invalid then m.top.dialog.close = true
     m.video.content = content
+    m.video.subtitleTrack = m.selectedSubtitleTrack
+    if m.selectedSubtitleTrack <> ""
+        m.video.globalCaptionMode = "On"
+        print "AOA stage subtitles_enabled"
+    else
+        m.video.globalCaptionMode = "Off"
+        print "AOA stage subtitles_disabled"
+    end if
     m.video.visible = true
-    m.playingTitle.visible = true
     m.video.SetFocus(true)
     m.awaitingPlay = command
     m.watchdog.control = "start"
@@ -760,7 +763,6 @@ sub playbackTimedOut()
     restoreBrowseFocus()
     updateSnapshot(true)
     showMessage("Stream timed out", "The stream did not start within 25 seconds. Check the provider connection or try another title.")
-    m.playingTitle.visible = false
     finishCommand(command, false, "Stream did not reach playing state within 25 seconds.")
     refreshContinue()
 end sub
@@ -773,12 +775,32 @@ sub videoPositionChanged()
     updateSnapshot(false)
 end sub
 
+sub subtitleTracksChanged()
+    if not m.selectSubtitleWhenAvailable then return
+    for each track in m.video.availableSubtitleTracks
+        if textValue(track["TrackName"]) = m.selectedSubtitleTrack
+            m.video.subtitleTrack = m.selectedSubtitleTrack
+            m.video.globalCaptionMode = "On"
+            m.selectSubtitleWhenAvailable = false
+            print "AOA stage subtitle_track_available"
+            return
+        end if
+    end for
+end sub
+
+sub subtitleTrackChanged()
+    if m.selectedSubtitleTrack <> "" and m.video.currentSubtitleTrack = m.selectedSubtitleTrack then print "AOA stage subtitle_track_selected"
+end sub
+
 sub videoStateChanged()
-    m.playingTitle.visible = m.video.visible and m.video.state <> "error" and m.video.state <> "finished" and m.video.state <> "stopped"
     if m.playback = invalid then return
     state = m.video.state
     print "AOA stage video_state "; state
     m.playState = state
+    if state = "playing" and m.reloadPaused
+        m.reloadPaused = false
+        m.video.control = "pause"
+    end if
     if m.awaitingPlay <> invalid and (state = "playing" or state = "error" or state = "finished")
         command = m.awaitingPlay
         m.awaitingPlay = invalid
@@ -787,10 +809,6 @@ sub videoStateChanged()
         message = ""
         if not success then message = "Stream failed before playback began. Roku error " + textValue(m.video.errorCode)
         finishCommand(command, success, message)
-    end if
-    if state = "playing" and m.reloadPaused
-        m.reloadPaused = false
-        m.video.control = "pause"
     end if
     updateSnapshot(true)
     if state = "error"
@@ -839,7 +857,7 @@ sub updateSnapshot(sendNow as boolean)
 end sub
 
 sub stopPlayback()
-    m.playingTitle.visible = false
+    m.selectSubtitleWhenAvailable = false
     pending = m.awaitingPlay
     if pending = invalid then pending = m.resolvingCommand
     m.awaitingPlay = invalid
@@ -857,6 +875,7 @@ sub stopPlayback()
 end sub
 
 sub restoreBrowseFocus()
+    m.selectSubtitleWhenAvailable = false
     m.details.visible = false
     m.selectionSerial++
     m.list.SetFocus(true)

@@ -31,3 +31,8 @@ test('late completion of a suspended poll cannot schedule a second loop',async()
   env.window.dispatchEvent(new Event('pageshow'));resolves[0]();await flush();assert.equal(env.timers.size,0);
   resolves[1]();await flush();assert.equal(env.timers.size,1);stop();
 });
+
+test('rate limited polling honors server cooldown',async()=>{
+  const env=environment();const stop=revalidate(async()=>{throw {retryAfterMs:45000};},()=>{},()=>{},env);
+  await flush();assert.equal([...env.timers.values()][0].delay,45000);stop();
+});

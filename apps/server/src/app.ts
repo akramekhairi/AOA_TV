@@ -29,7 +29,25 @@ function issue(state:State,input:{action:CommandAction;contentId?:string;positio
 export async function createApp(config:Config) {
   const app=Fastify({logger:{level:process.env.LOG_LEVEL||'info',redact:['req.headers.authorization','req.headers.x-admin-key','req.body','res.body']},disableRequestLogging:true,bodyLimit:65536,trustProxy:false});
   await app.register(cors,{origin:config.corsOrigin,methods:['GET','POST','PUT','DELETE','OPTIONS'],allowedHeaders:['Authorization','Content-Type','X-Admin-Key']});
-  await app.register(rateLimit,{max:240,timeWindow:'1 minute'});
+  // Render's untrusted proxy address can be shared by an entire household.
+  // Keep device traffic independent, and never store a bearer token as a key.
+  const rateBudget=(req:FastifyRequest)=>{
+    const route=req.routeOptions.url||'';
+    if(route==='/api/v1/assets/:key')return 'assets';
+    if(route==='/health')return 'health';
+    if(route.startsWith('/api/v1/admin/')||route.startsWith('/api/v1/pairing/'))return 'sensitive';
+    return 'api';
+  };
+  await app.register(rateLimit,{
+    max:req=>rateBudget(req)==='assets'?1200:rateBudget(req)==='health'?120:240,
+    timeWindow:'1 minute',
+    keyGenerator:req=>{
+      const budget=rateBudget(req);
+      if(budget!=='api')return `${budget}:ip:${req.ip}`;
+      const token=req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+      return token&&token.length<=200?`device:${hash(token)}`:`anonymous:ip:${req.ip}`;
+    }
+  });
   const store=new Store(config);await store.init();const catalog=new Catalog(config,store);const assets=new Assets(config,store,catalog);await assets.init();const subtitles=new Subtitles(config,assets);
   let rokuPresence: {deviceId:string;at:number} | undefined;
   app.decorateRequest('device',null);
@@ -119,6 +137,9 @@ export async function createApp(config:Config) {
   app.post(base+'/subtitles/select',{preHandler:auth},async req=>{
     const input=body(req);const item=await catalog.get(contentId(input.contentId));if(!['movie','episode'].includes(item.type))throw new HttpError(400,'Subtitles support movies and episodes');if(input.subtitleId!==null&&(typeof input.subtitleId!=='string'||input.subtitleId.length>40))throw new HttpError(400,'Invalid subtitle ID');const offset=input.offset===undefined?0:number(input.offset,'offset',-600,600);if(input.subtitleId!==null){await subtitles.validate(item,input.subtitleId);await subtitles.url(input.subtitleId,offset);}
     await store.change(state=>{state.subtitles[item.id]={id:input.subtitleId,offset};if(state.activeContentId===item.id&&state.activeSession&&state.tv.sessionId===state.activeSession&&['playing','paused','buffering'].includes(state.tv.state))issue(state,{action:'subtitles',contentId:item.id,position:state.tv.position||0,subtitleId:input.subtitleId,offset});});return {ok:true};
+  });
+  app.get<{Querystring:{contentId?:string}}>(base+'/subtitles/selection',{preHandler:auth},async req=>{
+    const id=contentId(req.query.contentId);const state=await store.read();const selection=state.subtitles[id];return {subtitleId:selection?.id||null,offset:selection?.offset||0};
   });
   app.get<{Params:{key:string};Querystring:{e:string;s:string}}>(base+'/assets/:key',async(req,reply)=>{const descriptor=assets.verify(req.params.key,req.query.e||'',req.query.s||'');const asset=await assets.get(descriptor);return reply.header('Cache-Control','private, max-age=300').type(asset.mime).send(asset.bytes);});
   return {app,store,catalog,assets};

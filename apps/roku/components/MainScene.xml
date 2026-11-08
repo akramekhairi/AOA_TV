@@ -22,11 +22,6 @@
       <LabelList id="detailButtons" translation="[310,514]" itemSize="[850,48]" numRows="3" />
     </Group>
     <Video id="video" width="1280" height="720" visible="false" enableUI="true" notificationInterval="1" />
-    <Group id="playingTitle" visible="false" translation="[36,24]">
-      <Rectangle width="1000" height="74" color="0x0B1220D9" />
-      <Poster id="playingTitleImage" translation="[18,7]" width="964" height="60" loadDisplayMode="scaleToFit" />
-      <Label id="playingTitleText" translation="[18,12]" width="964" height="50" font="font:MediumBoldSystemFont" />
-    </Group>
     <Timer id="playbackWatchdog" duration="25" repeat="false" />
     <NetworkTask id="network" />
   </children>
