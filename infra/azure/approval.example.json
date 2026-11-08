@@ -28,11 +28,13 @@
   },
   "priceEvidence": {
     "compute": "Exact Linux on-demand hourly meter times projected hours, less only verified allowance",
-    "diskStorageAndTransactions": "32 GiB Standard SSD E4 LRS monthly storage plus estimated transactions",
+    "diskStorageAndTransactions": "One64GiB Premium_LRS P6 OS disk; zero cost only with verified account-specific P6 allowance for the full first-year horizon.",
     "publicIpv4": "Standard static IPv4 hourly charge times projected hours",
     "bandwidthEgress": "Explicit expected catalog/image/subtitle transfer GB and applicable allowance/overage rate; video streams directly from the provider",
     "other": "Include other services, tax/currency effects if applicable; Azure DNS label and ACME certificate have no separate purchased zone/certificate here"
   },
   "maxApprovedCostUsd": null,
-  "approvedForDeployment": false
+  "approvedForDeployment": false,
+  "freeDiskAllowanceVerified": false,
+  "freeDiskEvidence": "Confirm account-specific first-year allowance covers one64GB Premium_LRS P6 disk for the full projected horizon. Otherwise include full retail disk cost."
 }

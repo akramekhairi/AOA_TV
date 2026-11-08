@@ -29,6 +29,7 @@ try {
   if (candidate.linuxHourlyPriceCandidates.length !== 1) fail('Ambiguous Linux retail compute meter; investigate before deploying.');
   const retailCompute = candidate.linuxHourlyPriceCandidates[0].retailPrice * 24 * approval.projectedDays;
   if (approval.costUsd.compute < retailCompute && (!approval.freeComputeAllowanceVerified || typeof approval.freeComputeEvidence !== 'string' || approval.freeComputeEvidence.length < 80 || approval.freeComputeEvidence.startsWith('If verified:'))) fail('Below-retail compute requires account-specific eligible SKU, remaining hours, benefit dates, and first-year charged-hours evidence.');
+  if(approval.costUsd.diskStorageAndTransactions===0&&(!approval.freeDiskAllowanceVerified||typeof approval.freeDiskEvidence!=='string'||approval.freeDiskEvidence.length<80))fail('Zero disk cost requires verified account-specific P6 allowance covering the first-year horizon.');
   const sshPublicKey = (await readFile(approval.sshPublicKeyPath, 'utf8')).trim();
   if (!/^(ssh-ed25519|ssh-rsa) [A-Za-z0-9+/=]+(?: .*)?$/.test(sshPublicKey)) fail('Expected an OpenSSH public key; never supply a private key.');
   const parameters = Object.fromEntries(Object.entries({ location: approval.region, vmSize: approval.vmSize, sshPublicKey, sshSourceCidr: approval.sshSourceCidr, dnsLabel: approval.dnsLabel }).map(([k, value]) => [k, { value }]));

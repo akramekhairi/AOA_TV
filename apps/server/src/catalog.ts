@@ -7,28 +7,37 @@ export class HttpError extends Error { constructor(public statusCode:number,mess
 export async function jsonFetch(url:string, init:RequestInit={}) { const response=await fetch(url,{...init,signal:AbortSignal.timeout(20000)});if(!response.ok)throw new HttpError(502,'Upstream service unavailable');return response.json(); }
 export class Catalog {
   private items=new Map<string,ContentItem>(); private categories:Category[]=[]; private expires=0; private loading?:Promise<void>; private episodes=new Map<string,{expires:number;items:ContentItem[]}>();private hydrated=new Set<string>();
-  private ttl=24*60*60_000; private forceRefresh=false;
+  private ttl=24*60*60_000; private refreshAfter=0; private hasTopSnapshot=false;
   private storedTopReady=false; private storedTopLoading?:Promise<void>;
   constructor(private config:Config,private store?:Store) {}
   private async provider(action:string, extra:Record<string,string>={}) {
     const url=new URL(this.config.xtreamUrl+'/player_api.php');Object.entries({username:this.config.xtreamUser,password:this.config.xtreamPassword,action,...extra}).forEach(([k,v])=>url.searchParams.set(k,v));
     return jsonFetch(url.href);
   }
-  async refresh() {if(this.loading)await this.loading;this.expires=0;this.episodes.clear();this.hydrated.clear();this.forceRefresh=true;try{await this.ensure();}finally{this.forceRefresh=false;}}
+  async refresh() {
+    if(this.loading)await this.loading;
+    this.expires=0;this.episodes.clear();this.hydrated.clear();
+    await this.startLoad();
+  }
   private async ensure() {
     if(this.expires>Date.now())return;
+    if(!this.config.demo&&!this.storedTopReady)await this.loadStoredTop();
+    if(this.expires>Date.now())return;
+    if(this.hasTopSnapshot) {
+      if(!this.loading&&Date.now()>=this.refreshAfter)void this.startLoad().catch(()=>{/* Keep serving the last valid snapshot. */});
+      return;
+    }
+    try {await this.startLoad();} catch(error) {
+      // A failed persistence write must not hide successfully fetched provider data.
+      if(!this.hasTopSnapshot)throw error;
+    }
+  }
+  private startLoad():Promise<void> {
     if(this.loading)return this.loading;
-    this.loading=this.load().finally(()=>{this.loading=undefined;});return this.loading;
+    this.loading=this.load().catch(error=>{this.refreshAfter=Date.now()+60000;throw error;}).finally(()=>{this.loading=undefined;});
+    return this.loading;
   }
   private async load() {
-    if(!this.config.demo&&!this.forceRefresh&&this.store?.client){
-      const result=await this.store.client.from('aoa_catalog').select('payload,updated_at').eq('id','top').maybeSingle();
-      if(result.error)throw new HttpError(503,'Catalog cache unavailable');
-      if(result.data&&Date.parse(result.data.updated_at)+this.ttl>Date.now()){
-        this.items=new Map((result.data.payload.items as ContentItem[]).map(item=>[item.id,item]));
-        this.categories=result.data.payload.categories as Category[];this.expires=Date.parse(result.data.updated_at)+this.ttl;this.storedTopReady=true;return;
-      }
-    }
     if(this.config.demo) {
       this.categories=types.map(type=>({id:`demo-${type}`,title:type==='live'?'Live channels':type==='movie'?'أفلام خيالية':'مسلسلات خيالية',type}));
       for(const item of [
@@ -44,9 +53,10 @@ export class Catalog {
       }));
       const map=new Map<string,ContentItem>();for(const result of results)for(const item of result.items)map.set(item.id,item);
       this.items=map;this.hydrated.clear();this.categories=results.flatMap(result=>result.categories);
+      this.expires=Date.now()+this.ttl;this.storedTopReady=true;this.hasTopSnapshot=true;this.refreshAfter=0;
       if(this.store?.client){const saved=await this.store.client.from('aoa_catalog').upsert({id:'top',payload:{items:[...map.values()],categories:this.categories},updated_at:new Date().toISOString()});if(saved.error)throw new HttpError(503,'Catalog cache unavailable');}
     }
-    this.expires=Date.now()+this.ttl;this.storedTopReady=true;
+    this.expires=Date.now()+this.ttl;this.storedTopReady=true;this.hasTopSnapshot=true;this.refreshAfter=0;
   }
   private map(row:any,type:MediaType):ContentItem {
     const providerId=String(type==='series'?row.series_id:row.stream_id??row.id);
@@ -75,9 +85,14 @@ export class Catalog {
     // snapshot once, including when the requested IDs are absent. This path must
     // never trigger a provider refresh or metadata hydration.
     this.storedTopLoading=(async()=>{
-      const result=await this.store!.client!.from('aoa_catalog').select('payload').eq('id','top').maybeSingle();
+      const result=await this.store!.client!.from('aoa_catalog').select('payload,updated_at').eq('id','top').maybeSingle();
       if(result.error)throw new HttpError(503,'Catalog cache unavailable');
-      for(const item of (result.data?.payload.items||[]) as ContentItem[])if(!this.items.has(item.id))this.items.set(item.id,item);
+      if(result.data&&!this.hasTopSnapshot) {
+        for(const item of (result.data.payload.items||[]) as ContentItem[])if(!this.items.has(item.id))this.items.set(item.id,item);
+        this.categories=(result.data.payload.categories||[]) as Category[];
+        this.expires=Date.parse(result.data.updated_at)+this.ttl;
+        this.hasTopSnapshot=true;
+      }
       this.storedTopReady=true;
     })().finally(()=>{this.storedTopLoading=undefined;});
     return this.storedTopLoading;

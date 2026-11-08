@@ -4,15 +4,17 @@
 
 Create a root `.env` from the server example. It is ignored by Git. Never put IPTV credentials in a Vite environment variable: `VITE_*` values are public browser configuration. Only the public API origin belongs in `VITE_API_URL`.
 
-Store actual credentials in Render environment secrets for hosted operation. Keep `.local/` private. Do not attach screenshots containing tokens, provider URLs, or setup files to public issues.
+Store hosted credentials privately on the Azure VM under /opt/aoa-tv/app.env; see [Azure deployment](AZURE.md). Keep `.local/` private. Do not attach screenshots containing tokens, provider URLs, or setup files to public issues.
 
 ## 2. Supabase Free
 
-Create a free Supabase project without adding a billing method. Run the migration in `supabase/` through the SQL editor. Follow the server README for the private storage bucket and required secret values. The backend uses the service role key; the phone and Roku apps must never receive that key. Select the nearest region for Supabase and Render.
+Create a free Supabase project without adding a billing method. Run the migration in `supabase/` through the SQL editor. Follow the server README for the private storage bucket and required secret values. The backend uses the service role key; the phone and Roku apps must never receive that key. Keep the existing Supabase project when changing compute hosts.
 
-Supabase contains persistent catalog data, device authorization, favorites, progress, commands, and cached assets. The Render filesystem is temporary and is not used as the durable database.
+Supabase contains persistent catalog data, device authorization, favorites, progress, commands, and cached assets. Compute-host filesystems are not used as the durable household database.
 
-## 3. Render Free
+## 3. Azure for Students (primary) and Render rollback
+
+Follow [Azure deployment](AZURE.md) for the primary continuously running VM. The following Render instructions are retained for rollback.
 
 Connect the public AOA_TV repository. Use its `render.yaml` blueprint or create a Docker web service using the server Dockerfile with the repository root as build context. Select **Free** and configure all production secrets from the server example. Set `DEMO_MODE=false`, the public Render URL, and the GitHub Pages origin. Do not use Render's expiring free Postgres database; persistence uses Supabase.
 
@@ -20,9 +22,9 @@ Verify `/health` reports a healthy production service. Check catalog access from
 
 ## 4. GitHub Pages
 
-Repository Settings → Pages → Source: **GitHub Actions**. Set repository Actions variable `VITE_API_URL` to the public Render origin. Run **Deploy phone app**. The intended URL is `https://akramekhairi.github.io/AOA_TV/`.
+Repository Settings → Pages → Source: **GitHub Actions**. Set repository Actions variable `VITE_API_URL` to the active public Azure HTTPS origin. Run **Deploy phone app**. The intended URL is `https://akramekhairi.github.io/AOA_TV/`.
 
-The interface also permits entering the backend URL on the phone. The published files are a static UI; no secret or private catalog is deployed to Pages.
+The phone selects the API origin from deployment configuration; users never enter an address. The published files are a static UI; no secret or private catalog is deployed to Pages.
 
 ## 5. Enroll and install Roku
 
@@ -55,8 +57,8 @@ The service worker caches the interface only. Authentication, catalog, playback,
 
 ## Updates and recovery
 
-- Push code to `main` for CI; deploy Pages using its workflow. Render can redeploy from the same branch.
+- Push code to main for CI and public container builds. Deploy the immutable container digest to Azure using the setup guide; Pages uses its own workflow.
 - Download the Roku ZIP from the validation workflow and sideload it. Keep the same app registry and device credentials when possible; pair again if registry data was reset.
-- After idle time, allow Render time to wake. If Supabase was paused, resume the project in its dashboard.
+- Azure does not sleep from inactivity. Check /health and /ready for process versus database status. If Supabase was paused, resume the project in its dashboard.
 - Inspect sanitized server logs and `/health`; never log full provider requests or device tokens.
 - Free quota errors should be resolved by reducing usage or waiting for reset, not by automatically upgrading.

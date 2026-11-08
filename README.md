@@ -29,14 +29,14 @@ npm run package:roku
 
 On Windows PowerShell, use `npm.cmd` if script execution policy prevents `npm` from running.
 
-Run the backend and frontend in separate terminals using `npm run dev` and `npm run dev:web`. Configure the backend using its `.env.example`; demo mode must be explicitly enabled and uses fictional content with temporary state. The phone app's Settings accepts the backend URL, so a locally configured endpoint does not need to be committed.
+Run the backend and frontend in separate terminals using `npm run dev` and `npm run dev:web`. Configure the backend using its `.env.example`; demo mode must be explicitly enabled and uses fictional content with temporary state. Set VITE_API_URL for local development; the phone resolves the endpoint from deployment configuration and never asks users to enter it.
 
 See [Setup](docs/SETUP.md), [API contract](docs/API.md), and [Acceptance checklist](docs/ACCEPTANCE.md).
 
 ## Daily use
 
 1. Open AOA_TV on the TV.
-2. Open the phone app and pair once with the code shown in Roku Settings.
+2. Open the phone app, enter your phone name, tap Show pairing code on TV, then enter the six-digit TV code.
 3. Search Arabic or English, select a movie/channel/episode, and tap **Play on TV**.
 4. Use **English subtitles** on a movie or episode to search, select, disable, or adjust timing.
 
@@ -44,7 +44,7 @@ Everyone shares favorites and progress. Paired phones remain authorized even awa
 
 ## Free hosting limitations
 
-The configuration selects free services and requires no paid plan. Render sleeps after inactivity and may need about a minute to wake. Supabase may pause an inactive project; resume it in the dashboard. Quota exhaustion can stop features until capacity resets. Do not add billing methods or select paid instances to follow this project's no-charge deployment plan.
+The primary backend runs continuously on an Azure for Students VM. Its first-year VM/disk allowances and public-IP usage are tracked against student credit; see [Azure setup](docs/AZURE.md). Render is retained only as a rollback option and sleeps after inactivity. Supabase may pause an inactive project; resume it in the dashboard. Quota exhaustion can stop features until capacity resets. Do not add billing methods or select paid instances to follow this project's no-charge deployment plan.
 
 No uptime guarantee is implied. Keep exported backups of important viewing history; do not depend on free hosting as the sole copy of important data.
 

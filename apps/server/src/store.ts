@@ -14,7 +14,11 @@ export interface State {
 const initial = (): State => ({devices:{},pairings:{},commands:{},favorites:[],progress:{},subtitles:{},tv:{online:false,state:'idle'}});
 export class Store {
   client?:SupabaseClient; private memory=initial(); private queue=Promise.resolve();private version:number|undefined;private checkedAt=0;private reading?:Promise<void>;
-  constructor(config:Config) { if (!config.demo) this.client=createClient(config.supabaseUrl,config.supabaseKey,{auth:{persistSession:false,autoRefreshToken:false},global:{fetch:(input,init)=>fetch(input,{...init,signal:init?.signal?AbortSignal.any([init.signal,AbortSignal.timeout(10000)]):AbortSignal.timeout(10000)})}}); }
+  constructor(config:Config) { if (!config.demo) this.client=createClient(config.supabaseUrl,config.supabaseKey,{auth:{persistSession:false,autoRefreshToken:false},global:{fetch:(input,init)=>{
+    const url=typeof input==='string'?input:input instanceof URL?input.href:input.url;
+    const timeout=AbortSignal.timeout(url.includes('/rest/v1/aoa_catalog')?60000:10000);
+    return fetch(input,{...init,signal:init?.signal?AbortSignal.any([init.signal,timeout]):timeout});
+  }}}); }
   async init() { if(this.client) await this.read(); }
   private async refresh(force=false):Promise<void> {
     if(!this.client)return;

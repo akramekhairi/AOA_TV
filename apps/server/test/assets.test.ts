@@ -9,6 +9,15 @@ import type { Store } from '../src/store.js';
 import type { Catalog } from '../src/catalog.js';
 
 const fontDirectory=resolve(import.meta.dirname,'../../../assets/fonts');
+test('signed image URLs remain stable during polling and still expire',()=>{
+  const settings=config({DEMO_MODE:'true',ADMIN_KEY:'test-admin-key-000000000000',ASSET_SIGNING_KEY:'test-signing-secret-000000000000000000'});
+  const assets=new Assets(settings,{} as Store,{} as Catalog),original=Date.now,now=Date.UTC(2026,10,8,12,1);
+  try{Date.now=()=>now;const first=assets.url('text:title:Test');Date.now=()=>now+10000;assert.equal(assets.url('text:title:Test'),first);
+    Date.now=()=>now+900000;assert.notEqual(assets.url('text:title:Test'),first);
+    const url=new URL(first);assert.equal(assets.verify(url.pathname.split('/').pop()!,url.searchParams.get('e')!,url.searchParams.get('s')!),'text:title:Test');
+    Date.now=()=>now+3600000;assert.throws(()=>assets.verify(url.pathname.split('/').pop()!,url.searchParams.get('e')!,url.searchParams.get('s')!),{statusCode:403});
+  }finally{Date.now=original;}
+});
 // Verify actual Unicode mappings in the bundled OpenType cmap, rather than merely
 // checking that PNG generation succeeds (missing-glyph boxes also produce PNGs).
 function glyph(font:Buffer,code:number):number {
