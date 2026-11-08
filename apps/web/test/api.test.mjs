@@ -13,3 +13,31 @@ test('network failures preserve pairing and late suspended responses are cancell
 test('caller cancellation propagates without a misleading connectivity error',async()=>{const original=globalThis.fetch;try{const controller=new AbortController();controller.abort();globalThis.fetch=async(_url,options)=>{options.signal.throwIfAborted();};await assert.rejects(request('https://backend.test','t','/catalog',{},controller.signal),{name:'AbortError'});}finally{globalThis.fetch=original;}});
 
 test('rate limits expose Retry-After without discarding pairing',async()=>{const original=globalThis.fetch;try{globalThis.fetch=async()=>Response.json({error:'Rate limited'},{status:429,headers:{'Retry-After':'45'}});await assert.rejects(request('https://backend.test','t','/tv/status'),e=>e.retryAfterMs===45000&&!e.invalidCredentials);}finally{globalThis.fetch=original;}});
+
+test('network, timeout, unavailable service and readiness failures have distinct actionable messages',async()=>{
+  const original=globalThis.fetch;const originalTimeout=AbortSignal.timeout;
+  try {
+    globalThis.fetch=async()=>{throw new TypeError('offline');};
+    await assert.rejects(request('https://backend.test','','/pairing/request',{method:'POST'}),e=>/internet connection/.test(e.message)&&!/waking|address/.test(e.message));
+    AbortSignal.timeout=()=>{const controller=new AbortController();controller.abort(new DOMException('timed out','TimeoutError'));return controller.signal;};
+    globalThis.fetch=async(_url,options)=>{options.signal.throwIfAborted();};
+    await assert.rejects(request('https://backend.test','','/pairing/request',{method:'POST'}),e=>/request timed out/.test(e.message)&&!/waking/.test(e.message));
+    AbortSignal.timeout=originalTimeout;
+    for(const status of [502,503,504]) {
+      globalThis.fetch=async()=>new Response('gateway failure',{status,headers:{'Retry-After':'35'}});
+      await assert.rejects(request('https://backend.test','','/pairing/request',{method:'POST'}),e=>e.retryAfterMs===35000&&/temporarily unavailable|service timed out/.test(e.message)&&!/waking/.test(e.message));
+    }
+    globalThis.fetch=async()=>Response.json({error:'Service is not ready. Please try again shortly.'},{status:503});
+    await assert.rejects(request('https://backend.test','','/pairing/request',{method:'POST'}),e=>/not ready/.test(e.message));
+  } finally {globalThis.fetch=original;AbortSignal.timeout=originalTimeout;}
+});
+test('pairing requests are unauthenticated, accept only pending metadata and never auto retry mutations',async()=>{
+  const original=globalThis.fetch;let calls=0;
+  try {
+    globalThis.fetch=async(url,options)=>{calls++;assert.equal(url,'https://backend.test/api/v1/pairing/request');assert.equal(options.method,'POST');assert.equal(options.headers.has('Authorization'),false);assert.equal(options.body,undefined);return Response.json({status:'pending',expiresAt:'2026-11-08T16:00:00.000Z',reused:false,retryAfterSeconds:30},{status:202});};
+    const result=await request('https://backend.test','','/pairing/request',{method:'POST'});
+    assert.equal(result.status,'pending');assert.equal(result.token,undefined);assert.equal(result.code,undefined);assert.equal(calls,1);
+    calls=0;globalThis.fetch=async()=>{calls++;return new Response('unavailable',{status:503});};
+    await assert.rejects(request('https://backend.test','','/pairing/request',{method:'POST'}));assert.equal(calls,1);
+  }finally{globalThis.fetch=original;}
+});

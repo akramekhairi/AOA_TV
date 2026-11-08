@@ -6,15 +6,17 @@ export async function request<T>(base: string, token: string, path: string, opti
   if(options.body) headers.set('Content-Type', 'application/json');
   let response: Response;
   try { response = await fetch(`${base}/api/v1${path}`, {...options, headers, cache:'no-store', signal: signal ? AbortSignal.any([signal, timeout]) : timeout}); }
-  catch (error) { if(signal?.aborted) throw error; throw new ApiError(timeout.aborted ? 'The backend may be waking up. Wait about a minute and try again.' : 'Cannot reach the backend. Check your connection and backend address, or retry in a minute if the backend is waking up.', 0); }
+  catch (error) { if(signal?.aborted) throw error; throw new ApiError(timeout.aborted ? 'The request timed out. Check your connection and try again.' : 'Cannot connect to AOA TV. Check your internet connection and try again.', 0); }
   if(!response.ok) {
-    let message = `Request failed (${response.status}). Please try again.`;
+    let message = response.status === 504 ? 'The service timed out. Try again shortly.'
+      : [502,503].includes(response.status) ? 'The service is temporarily unavailable. Try again shortly.'
+      : `Request failed (${response.status}). Please try again.`;
     let invalidCredentials = false;
     try { const body = await response.json(); invalidCredentials = response.status === 401 && ['Device token required', 'Device token invalid or revoked'].includes(body.error); if(typeof body.error === 'string') message = body.error.replace(/https?:\/\/\S+/gi, '[address hidden]').replace(/(?:password|token|username|api[_-]?key)\s*[:=]\s*[^\s,;]+/gi, '[private value hidden]').slice(0,400); } catch { /* Non-JSON proxy error. */ }
     if(invalidCredentials) message = 'This phone is no longer paired. Pair again on your TV.';
-    if(response.status===502 || response.status===503 || response.status===504) message += ' The service may be waking up; retry in about a minute.';
     const retryAfter=response.headers.get('Retry-After');
-    const retryAfterMs=response.status===429?Math.max(1000,Math.min(600000,retryAfter && /^\d+$/.test(retryAfter)?Number(retryAfter)*1000:60000)):0;
+    const retryDelay = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter)*1000 : retryAfter ? Date.parse(retryAfter)-Date.now() : NaN;
+    const retryAfterMs = Number.isFinite(retryDelay) ? Math.max(1000,Math.min(600000,retryDelay)) : response.status===429 ? 60000 : 0;
     throw new ApiError(message, response.status, invalidCredentials, retryAfterMs);
   }
   const result = await response.json();

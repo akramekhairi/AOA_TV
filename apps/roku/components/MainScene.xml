@@ -22,6 +22,18 @@
       <LabelList id="detailButtons" translation="[310,514]" itemSize="[850,48]" numRows="3" />
     </Group>
     <Video id="video" width="1280" height="720" visible="false" enableUI="true" notificationInterval="1" />
+    <!-- After Video in draw order; this panel never takes remote focus. -->
+    <Group id="pairingPanel" translation="[350,94]" visible="false">
+      <Rectangle width="580" height="332" color="0xFFE16AFF" />
+      <Rectangle translation="[4,4]" width="572" height="324" color="0x05080DFF" />
+      <Label translation="[30,24]" width="520" height="44" text="Pair your phone" font="font:LargeBoldSystemFont" color="0xFFE16AFF" horizAlign="center" />
+      <Label id="pairingCode" translation="[30,80]" width="520" height="88" horizAlign="center" color="0xFFFFFFFF">
+        <Font role="font" uri="font:BoldSystemFontFile" size="68" />
+      </Label>
+      <Label translation="[30,180]" width="520" height="62" text="Enter this six-digit code in the phone app." font="font:MediumSystemFont" color="0xFFFFFFFF" wrap="true" numLines="2" horizAlign="center" />
+      <Label translation="[30,266]" width="520" height="34" text="Back: hide code" font="font:MediumBoldSystemFont" color="0xFFE16AFF" horizAlign="center" />
+    </Group>
+    <Timer id="pairingExpiry" duration="1" repeat="true" />
     <Timer id="playbackWatchdog" duration="25" repeat="false" />
     <NetworkTask id="network" />
   </children>

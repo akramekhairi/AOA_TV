@@ -1,0 +1,38 @@
+{
+  "subscriptionId": "REPLACE_UUID",
+  "resourceGroup": "aoa-tv-students",
+  "region": "canadacentral",
+  "vmSize": "Standard_B1s",
+  "dnsLabel": "aoa-tv-REPLACE-unique",
+  "sshPublicKeyPath": ".local/azure-vm.pub",
+  "sshSourceCidr": "REPLACE_YOUR_PUBLIC_IPV4/32",
+  "verifiedAt": null,
+  "verifiedBy": null,
+  "studentsOfferVerified": false,
+  "effectiveRegionPolicyVerified": false,
+  "spendingLimitOnVerified": false,
+  "remainingCreditUsd": null,
+  "creditExpiresAt": null,
+  "projectedDays": null,
+  "firstYearCostVerified": false,
+  "reserveUsd": 20,
+  "otherSubscriptionSpendUsd": null,
+  "freeComputeAllowanceVerified": false,
+  "freeComputeEvidence": "If verified: account-specific exact eligible SKU, remaining monthly hours, benefit start/end dates, and projected charged hours over the remaining first year. Otherwise use full retail compute.",
+  "costUsd": {
+    "compute": null,
+    "diskStorageAndTransactions": null,
+    "publicIpv4": null,
+    "bandwidthEgress": null,
+    "other": null
+  },
+  "priceEvidence": {
+    "compute": "Exact Linux on-demand hourly meter times projected hours, less only verified allowance",
+    "diskStorageAndTransactions": "32 GiB Standard SSD E4 LRS monthly storage plus estimated transactions",
+    "publicIpv4": "Standard static IPv4 hourly charge times projected hours",
+    "bandwidthEgress": "Explicit expected catalog/image/subtitle transfer GB and applicable allowance/overage rate; video streams directly from the provider",
+    "other": "Include other services, tax/currency effects if applicable; Azure DNS label and ACME certificate have no separate purchased zone/certificate here"
+  },
+  "maxApprovedCostUsd": null,
+  "approvedForDeployment": false
+}

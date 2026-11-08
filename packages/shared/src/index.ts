@@ -14,4 +14,7 @@ export interface PlaybackCommand { id: string; action: CommandAction; contentId?
 export interface Playback { item: ContentItem; url: string; streamFormat: string; position: number; sessionId: string; subtitleUrl?: string; warning?: string }
 export interface SubtitleResult { id: string; label: string; language: string; score: number; strongMatch: boolean; downloadCount?: number }
 export interface Device { id: string; name: string; kind: 'phone' | 'roku'; createdAt: string }
+export interface PairingDisplay { id: string; code: string; expiresAt: string }
+export interface RokuPollResponse { commands: PlaybackCommand[]; pairingDisplay?: PairingDisplay }
+export interface PairingRequestResponse { status: 'pending'; expiresAt: string; reused: boolean; retryAfterSeconds: number }
 export const normalizeSearch = (value: string) => value.normalize('NFKC').replace(/[\u064B-\u065F\u0670\u0640]/g, '').replace(/[أإآٱ]/g, 'ا').toLocaleLowerCase().trim();

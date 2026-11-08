@@ -26,15 +26,22 @@ function issue(state:State,input:{action:CommandAction;contentId?:string;positio
   const entries=Object.values(state.commands);if(entries.length>300)for(const old of entries.slice(0,entries.length-300))delete state.commands[old.id];
   return command;
 }
+function pairingCode(state:State,rokuId:string) {
+  for(const [code,pair]of Object.entries(state.pairings))if(Date.parse(pair.expiresAt)<=Date.now())delete state.pairings[code];
+  const existing=Object.entries(state.pairings).find(([,pair])=>pair.rokuId===rokuId);
+  if(existing)return {code:existing[0],expiresAt:existing[1].expiresAt};
+  let code:string;do{code=String(randomInt(100000,1000000));}while(state.pairings[code]);
+  const expiresAt=new Date(Date.now()+300000).toISOString();state.pairings[code]={expiresAt,rokuId};return {code,expiresAt};
+}
 export async function createApp(config:Config) {
-  const app=Fastify({logger:{level:process.env.LOG_LEVEL||'info',redact:['req.headers.authorization','req.headers.x-admin-key','req.body','res.body']},disableRequestLogging:true,bodyLimit:65536,trustProxy:false});
+  const app=Fastify({logger:{level:process.env.LOG_LEVEL||'info',redact:['req.headers.authorization','req.headers.x-admin-key','req.body','res.body']},disableRequestLogging:true,bodyLimit:65536,trustProxy:config.trustProxy});
   await app.register(cors,{origin:config.corsOrigin,methods:['GET','POST','PUT','DELETE','OPTIONS'],allowedHeaders:['Authorization','Content-Type','X-Admin-Key']});
   // Render's untrusted proxy address can be shared by an entire household.
   // Keep device traffic independent, and never store a bearer token as a key.
   const rateBudget=(req:FastifyRequest)=>{
     const route=req.routeOptions.url||'';
     if(route==='/api/v1/assets/:key')return 'assets';
-    if(route==='/health')return 'health';
+    if(route==='/health'||route==='/ready')return 'health';
     if(route.startsWith('/api/v1/admin/')||route.startsWith('/api/v1/pairing/'))return 'sensitive';
     return 'api';
   };
@@ -48,24 +55,41 @@ export async function createApp(config:Config) {
       return token&&token.length<=200?`device:${hash(token)}`:`anonymous:ip:${req.ip}`;
     }
   });
-  const store=new Store(config);await store.init();const catalog=new Catalog(config,store);const assets=new Assets(config,store,catalog);await assets.init();const subtitles=new Subtitles(config,assets);
-  let rokuPresence: {deviceId:string;at:number} | undefined;
+  const store=new Store(config);try{await store.init();}catch{app.log.warn({code:'storage_unready'},'Data service unavailable at startup; requests will retry');}const catalog=new Catalog(config,store);const assets=new Assets(config,store,catalog);await assets.init();const subtitles=new Subtitles(config,assets);
+  let rokuPresence: {deviceId:string;at:number;connectionId?:string} | undefined;
   app.decorateRequest('device',null);
   const auth=async(req:FastifyRequest)=>{const token=req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];if(!token||token.length>200)throw new HttpError(401,'Device token required');const state=await store.read();const device=Object.values(state.devices).find(d=>!d.revoked&&safeEqual(d.tokenHash,hash(token)));if(!device)throw new HttpError(401,'Device token invalid or revoked');(req as any).device=cleanDevice(device);};
   const roku=async(req:FastifyRequest)=>{await auth(req);if((req as any).device.kind!=='roku')throw new HttpError(403,'Roku device required');};
   app.setErrorHandler((unknownError,_req,reply)=>{const error=unknownError as {statusCode?:number;message:string};const status=error.statusCode&&error.statusCode>=400&&error.statusCode<600?error.statusCode:500;if(status>=500)app.log.error({code:status},'Request failed');reply.code(status).send({error:status===500?'Service unavailable':error.message});});
   app.get('/health',()=>({ok:true,demo:config.demo}));
+  app.get('/ready',async(_req,reply)=>{try{await store.read();return {ok:true,storage:'ready'};}catch{return reply.code(503).send({ok:false,storage:'unavailable'});}});
   const base='/api/v1';
   app.post(base+'/admin/enroll',{config:{rateLimit:{max:5,timeWindow:'1 minute'}}},async req=>{
     if(!safeEqual(String(req.headers['x-admin-key']||''),config.adminKey))throw new HttpError(401,'Invalid admin key');const deviceName=name(body(req).name);const token=randomBytes(32).toString('base64url');const device:Device={id:randomUUID(),name:deviceName,kind:'roku',createdAt:timestamp()};
-    await store.change(state=>{for(const d of Object.values(state.devices))if(d.kind==='roku')d.revoked=true;state.pairings={};state.devices[device.id]={...device,tokenHash:hash(token)};});return {token,device};
+    await store.change(state=>{for(const d of Object.values(state.devices))if(d.kind==='roku')d.revoked=true;state.pairings={};delete state.pairingDisplay;state.devices[device.id]={...device,tokenHash:hash(token)};});return {token,device};
   });
-  app.post(base+'/pairing/code',{preHandler:roku,config:{rateLimit:{max:6,timeWindow:'1 minute'}}},async req=>store.change(state=>{
-    for(const [code,pair]of Object.entries(state.pairings))if(Date.parse(pair.expiresAt)<Date.now()||pair.rokuId===(req as any).device.id)delete state.pairings[code];let code:string;do{code=String(randomInt(100000,1000000));}while(state.pairings[code]);const expiresAt=new Date(Date.now()+300000).toISOString();state.pairings[code]={expiresAt,rokuId:(req as any).device.id};return {code,expiresAt};
-  }));
+  app.post(base+'/pairing/code',{preHandler:roku,config:{rateLimit:{max:6,timeWindow:'1 minute'}}},async req=>store.change(state=>pairingCode(state,(req as any).device.id)));
+  app.post(base+'/pairing/request',{config:{rateLimit:{max:3,timeWindow:'1 minute'}}},async(_req,reply)=>{
+    const presence=rokuPresence;
+    if(!presence?.connectionId||presence.at<Date.now()-6000)throw new HttpError(503,'Open AOA TV on Roku before requesting a pairing code.');
+    const result=await store.change(state=>{
+      const device=state.devices[presence.deviceId];if(!device||device.revoked)throw new HttpError(503,'Open AOA TV on Roku before requesting a pairing code.');
+      const pending=state.pairingDisplay;
+      if(pending&&!pending.dismissed&&pending.connectionId===presence.connectionId&&state.pairings[pending.code]&&Date.parse(pending.expiresAt)>Date.now()&&(pending.shown||Date.parse(pending.deliverBy)>Date.now()))return {status:'pending',expiresAt:pending.expiresAt,reused:true,retryAfterSeconds:30};
+      const remaining=Math.ceil(((Date.parse(state.lastPairingRequestAt||'')||0)+30000-Date.now())/1000);
+      if(remaining>0){reply.header('Retry-After',remaining);throw new HttpError(429,'A pairing code was just requested. Check the TV or try again shortly.');}
+      const pair=pairingCode(state,presence.deviceId);state.lastPairingRequestAt=timestamp();
+      state.pairingDisplay={id:randomUUID(),...pair,rokuId:presence.deviceId,connectionId:presence.connectionId!,deliverBy:new Date(Date.now()+15000).toISOString(),shown:false,dismissed:false};
+      return {status:'pending',expiresAt:pair.expiresAt,reused:false,retryAfterSeconds:30};
+    });return reply.code(202).send(result);
+  });
+  app.post(base+'/roku/pairing/display',{preHandler:roku},async req=>{
+    const input=body(req);if(typeof input.requestId!=='string'||!['shown','dismissed'].includes(input.status))throw new HttpError(400,'Invalid pairing display acknowledgement');
+    await store.change(state=>{const pending=state.pairingDisplay;if(!pending||pending.id!==input.requestId||pending.rokuId!==(req as any).device.id)return;if(input.status==='dismissed')pending.dismissed=true;else pending.shown=true;});return {ok:true};
+  });
   app.post(base+'/pairing/claim',{config:{rateLimit:{max:8,timeWindow:'10 minutes'}}},async req=>{
     const input=body(req);const deviceName=name(input.name);if(typeof input.code!=='string'||!/^\d{6}$/.test(input.code))throw new HttpError(400,'Six digit code required');const token=randomBytes(32).toString('base64url');const device:Device={id:randomUUID(),name:deviceName,kind:'phone',createdAt:timestamp()};
-    await store.change(state=>{const pair=state.pairings[input.code];if(!pair||Date.parse(pair.expiresAt)<=Date.now()||state.devices[pair.rokuId]?.revoked)throw new HttpError(400,'Pairing code invalid or expired');if(Object.values(state.devices).filter(d=>!d.revoked&&d.kind==='phone').length>=20)throw new HttpError(409,'Revoke a phone before pairing another');delete state.pairings[input.code];state.devices[device.id]={...device,tokenHash:hash(token)};});return {token,device};
+    await store.change(state=>{const pair=state.pairings[input.code];if(!pair||Date.parse(pair.expiresAt)<=Date.now()||state.devices[pair.rokuId]?.revoked)throw new HttpError(400,'Pairing code invalid or expired');if(Object.values(state.devices).filter(d=>!d.revoked&&d.kind==='phone').length>=20)throw new HttpError(409,'Revoke a phone before pairing another');delete state.pairings[input.code];if(state.pairingDisplay?.code===input.code)delete state.pairingDisplay;state.devices[device.id]={...device,tokenHash:hash(token)};});return {token,device};
   });
   app.get(base+'/devices',{preHandler:auth},async()=>({devices:Object.values((await store.read()).devices).filter(d=>!d.revoked).map(cleanDevice)}));
   app.delete<{Params:{id:string}}>(base+'/devices/:id',{preHandler:roku},async req=>{await store.change(state=>{const device=state.devices[req.params.id];if(!device||device.revoked)throw new HttpError(404,'Device not found');if(device.kind!=='phone')throw new HttpError(400,'Only phones can be revoked');device.revoked=true;});return {ok:true};});
@@ -106,12 +130,15 @@ export async function createApp(config:Config) {
     return store.change(state=>issue(state,{action:input.action,contentId:id||state.activeContentId,...(input.position!==undefined?{position:input.position}:input.action==='play'?{position:state.progress[id!]?.completed?0:Math.max(0,(state.progress[id!]?.position||0)-5)}:{})}));
   });
   app.get<{Params:{id:string}}>(base+'/commands/:id',{preHandler:auth},async req=>{const command=(await store.read()).commands[req.params.id];if(!command)throw new HttpError(404,'Command not found');return commandView(command);});
-  app.get(base+'/roku/commands',{preHandler:roku},async req=>{
+  app.get<{Querystring:{connectionId?:string}}>(base+'/roku/commands',{preHandler:roku},async req=>{
+    const connectionId=req.query.connectionId;if(connectionId!==undefined&&!/^[A-Za-z0-9_-]{8,80}$/.test(connectionId))throw new HttpError(400,'Invalid Roku connection ID');
     const state=await store.read();
     // Receiving commands proves reachability even if playback status is delayed.
     // Keep high-frequency presence in memory; status heartbeats persist as usual.
-    rokuPresence={deviceId:(req as any).device.id,at:Date.now()};
-    return {commands:Object.values(state.commands).map(commandView).filter(c=>c.status==='pending')};
+    rokuPresence={deviceId:(req as any).device.id,at:Date.now(),connectionId};
+    const pending=state.pairingDisplay;
+    const pairingDisplay=pending&&!pending.dismissed&&pending.rokuId===(req as any).device.id&&pending.connectionId===connectionId&&state.pairings[pending.code]&&Date.parse(pending.expiresAt)>Date.now()&&(pending.shown||Date.parse(pending.deliverBy)>Date.now())?{id:pending.id,code:pending.code,expiresAt:pending.expiresAt}:undefined;
+    return {commands:Object.values(state.commands).map(commandView).filter(c=>c.status==='pending'),...(pairingDisplay?{pairingDisplay}:{})};
   });
   app.post<{Params:{id:string}}>(base+'/roku/commands/:id/ack',{preHandler:roku},async req=>{
     const input=body(req);if(!['acknowledged','failed'].includes(input.status))throw new HttpError(400,'Invalid acknowledgement');await store.change(state=>{const command=state.commands[req.params.id];if(!command)throw new HttpError(404,'Command not found');if(command.status!=='pending')return;if(Date.parse(command.expiresAt)<=Date.now()){command.status='expired';return;}command.status=input.status;if(input.status==='failed')command.error=String(input.error||'Playback failed').slice(0,300);});return {ok:true};

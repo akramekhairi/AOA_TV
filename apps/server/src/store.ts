@@ -7,12 +7,14 @@ export interface State {
   commands: Record<string, PlaybackCommand>;
   favorites: string[]; progress: Record<string,Progress>; subtitles: Record<string,{id:string|null;offset:number}>;
   hiddenProgress?: Record<string,string>;
+  pairingDisplay?: {id:string;code:string;rokuId:string;connectionId:string;expiresAt:string;deliverBy:string;shown:boolean;dismissed:boolean};
+  lastPairingRequestAt?: string;
   tv: TvStatus; activeSession?: string; activeContentId?:string;
 }
 const initial = (): State => ({devices:{},pairings:{},commands:{},favorites:[],progress:{},subtitles:{},tv:{online:false,state:'idle'}});
 export class Store {
   client?:SupabaseClient; private memory=initial(); private queue=Promise.resolve();private version:number|undefined;private checkedAt=0;private reading?:Promise<void>;
-  constructor(config:Config) { if (!config.demo) this.client=createClient(config.supabaseUrl,config.supabaseKey,{auth:{persistSession:false,autoRefreshToken:false}}); }
+  constructor(config:Config) { if (!config.demo) this.client=createClient(config.supabaseUrl,config.supabaseKey,{auth:{persistSession:false,autoRefreshToken:false},global:{fetch:(input,init)=>fetch(input,{...init,signal:init?.signal?AbortSignal.any([init.signal,AbortSignal.timeout(10000)]):AbortSignal.timeout(10000)})}}); }
   async init() { if(this.client) await this.read(); }
   private async refresh(force=false):Promise<void> {
     if(!this.client)return;

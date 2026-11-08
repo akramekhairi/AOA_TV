@@ -13,6 +13,13 @@ sub init()
     m.details = m.top.FindNode("details")
     m.detailButtons = m.top.FindNode("detailButtons")
     m.watchdog = m.top.FindNode("playbackWatchdog")
+    m.pairingPanel = m.top.FindNode("pairingPanel")
+    m.pairingCode = m.top.FindNode("pairingCode")
+    m.pairingExpiry = m.top.FindNode("pairingExpiry")
+    m.pairingRequestId = ""
+    m.pairingExpiresAt = 0
+    m.seenPairings = {}
+    m.seenPairingOrder = []
     m.base = ""
     m.token = ""
     m.configured = false
@@ -61,6 +68,7 @@ sub init()
     m.video.ObserveField("availableSubtitleTracks", "subtitleTracksChanged")
     m.video.ObserveField("currentSubtitleTrack", "subtitleTrackChanged")
     m.watchdog.ObserveField("fire", "playbackTimedOut")
+    m.pairingExpiry.ObserveField("fire", "pairingExpiryTick")
     m.net.ObserveField("response", "networkResponse")
     updateSnapshot(false)
     m.net.control = "RUN"
@@ -279,6 +287,9 @@ sub keyboardSelected()
 end sub
 
 sub configure()
+    hidePairingDisplay(false)
+    m.seenPairings = {}
+    m.seenPairingOrder = []
     if m.playback <> invalid then stopPlayback()
     m.net.request = {tag: "configure", base: m.base, token: m.token, preserveToken: m.token = "__stored__"}
     m.configured = m.base <> "" and m.token <> ""
@@ -442,6 +453,7 @@ sub networkResponse()
     end if
     if tag = "poll"
         if response.ok
+            receivePairingDisplay(response.data.pairingDisplay)
             m.connection.text = "Connected  |  Phone remote ready"
             if response.data.commands <> invalid
                 newestSession = ""
@@ -473,6 +485,11 @@ sub networkResponse()
         else
             m.connection.text = response.error
         end if
+        return
+    end if
+    if tag = "pairingAck"
+        ' Status only: do not print the response, request, code, or credentials.
+        print "AOA pairing display_ack HTTP "; response.code
         return
     end if
     if tag = "heartbeat" or tag = "progress" or tag = "ack"
@@ -540,7 +557,7 @@ sub networkResponse()
         end if
         if m.nav = 1 then request("favorites", "/favorites")
     else if tag = "pair"
-        showMessage("Phone pairing code: " + data.code, "Enter this code in the phone app. Expires: " + data.expiresAt + ". Anyone with this code can pair a phone.")
+        showPairingDisplay(data, "")
     else if tag = "devices"
         rows = []
         for each device in data.devices
@@ -582,6 +599,63 @@ sub networkResponse()
             showRows(rows, "continue")
         end if
     end if
+end sub
+
+sub receivePairingDisplay(display as dynamic)
+    if display = invalid
+        ' Empty polls can clear requested codes, but never a manual Settings code.
+        if m.pairingRequestId <> "" then hidePairingDisplay(false)
+        return
+    end if
+    requestId = textValue(display.id)
+    if requestId = "" then return
+    if m.seenPairings.DoesExist(requestId) then return
+    ' A native dialog would cover the panel and consume Back. Let the existing
+    ' poll redeliver after the dialog closes rather than acknowledge hidden UI.
+    if m.top.dialog <> invalid then return
+    if showPairingDisplay(display, requestId)
+        m.seenPairings[requestId] = true
+        m.seenPairingOrder.Push(requestId)
+        while m.seenPairingOrder.Count() > 200
+            m.seenPairings.Delete(m.seenPairingOrder.Shift())
+        end while
+        request("pairingAck", "/roku/pairing/display", "POST", {"requestId": requestId, status: "shown"})
+        print "AOA pairing display_shown"
+    end if
+end sub
+
+function showPairingDisplay(display as object, requestId as string) as boolean
+    code = textValue(display.code)
+    if not CreateObject("roRegex", "^[0-9]{6}$", "").IsMatch(code) then return false
+    expires = CreateObject("roDateTime")
+    expires.FromISO8601String(textValue(display.expiresAt))
+    now = CreateObject("roDateTime")
+    if expires.AsSeconds() <= now.AsSeconds() then return false
+    m.pairingExpiry.control = "stop"
+    m.pairingRequestId = requestId
+    m.pairingExpiresAt = expires.AsSeconds()
+    m.pairingCode.text = code
+    m.pairingPanel.visible = true
+    m.pairingExpiry.control = "start"
+    return true
+end function
+
+sub hidePairingDisplay(acknowledge as boolean)
+    requestId = m.pairingRequestId
+    m.pairingPanel.visible = false
+    m.pairingCode.text = ""
+    m.pairingExpiry.control = "stop"
+    m.pairingRequestId = ""
+    m.pairingExpiresAt = 0
+    if acknowledge and requestId <> ""
+        request("pairingAck", "/roku/pairing/display", "POST", {"requestId": requestId, status: "dismissed"})
+        print "AOA pairing display_dismissed"
+    end if
+end sub
+
+sub pairingExpiryTick()
+    now = CreateObject("roDateTime")
+    if now.AsSeconds() >= m.pairingExpiresAt then hidePairingDisplay(false)
 end sub
 
 sub nextCommand()
@@ -950,6 +1024,10 @@ end sub
 
 function onKeyEvent(key as string, press as boolean) as boolean
     if not press then return false
+    if key = "back" and m.pairingPanel.visible
+        hidePairingDisplay(true)
+        return true
+    end if
     if key = "back" and m.top.dialog <> invalid
         m.top.dialog.close = true
         return true

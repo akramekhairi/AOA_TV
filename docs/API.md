@@ -5,6 +5,9 @@ Base `/api/v1`. JSON requests/responses; authenticated requests use `Authorizati
 ## Enrollment and pairing
 - POST `/admin/enroll` header `X-Admin-Key`, body `{name}` → `{token,device}` for Roku. Admin key comes from private environment. Roku settings accepts the returned token, never the admin key.
 - POST `/pairing/code` Roku only → `{code,expiresAt}` (5 minutes).
+- POST `/pairing/request` public → HTTP 202 `{status:'pending',expiresAt,reused,retryAfterSeconds}`. Requires an active Roku connection; never returns the code. One outstanding display, 30-second household cooldown, three requests per client/minute.
+- GET `/roku/commands?connectionId=<app-session-UUID>` additionally returns optional `pairingDisplay:{id,code,expiresAt}` only to the authenticated Roku session. Undelivered displays expire after 15 seconds; reconnecting with a new UUID cannot replay them.
+- POST `/roku/pairing/display` Roku only body `{requestId,status:'shown'|'dismissed'}` → `{ok:true}`. Dismissal is terminal; claiming the code clears the panel on the next poll.
 - POST `/pairing/claim` public body `{code,name}` → `{token,device}`.
 - GET `/devices` → `{devices:Device[]}`; DELETE `/devices/:id` revokes phone; Roku only.
 
@@ -35,5 +38,6 @@ Base `/api/v1`. JSON requests/responses; authenticated requests use `Authorizati
 - Image/subtitle asset URLs are signed and expiring, returned by catalog/playback; no auth header required on those URLs.
 
 Health GET `/health` → `{ok:true,demo:boolean}`. Demo mode uses fictional fixtures and in-memory state only; explicit DEMO_MODE=true, never silently falls back from production storage errors.
+GET `/ready` checks persistent storage and returns HTTP 200 `{ok:true,storage:'ready'}` or HTTP 503 `{ok:false,storage:'unavailable'}`. Database unavailability does not make process liveness unhealthy.
 
 Normal API requests use a separate budget per hashed device token (240/minute). Signed artwork (1200/minute) and health checks (120/minute) have independent IP budgets. Pairing and administrator routes retain strict IP limits. Clients honor `Retry-After` on HTTP 429; playback URLs and tokens are never rate-limit keys or logs.

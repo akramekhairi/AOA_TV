@@ -9,8 +9,12 @@ sub networkLoop()
     m.registry = CreateObject("roRegistrySection", "AOATV")
     m.base = m.registry.Read("base")
     m.token = m.registry.Read("token")
+    ' One ephemeral ID per app run, never persisted or derived from a device ID.
+    deviceInfo = CreateObject("roDeviceInfo")
+    m.connectionId = deviceInfo.GetRandomUUID()
     m.pending = {}
     m.ackRetries = []
+    m.pairingAckStates = {}
     m.progressLatest = invalid
     m.progressVersion = 0
     m.progressDue = 0
@@ -45,6 +49,7 @@ sub configure(request as object)
     end for
     m.pending = {}
     m.ackRetries = []
+    m.pairingAckStates = {}
     m.progressLatest = invalid
     m.progressVersion++
     m.progressAttempts = 0
@@ -61,6 +66,17 @@ end sub
 
 sub startRequest(request as object)
     if m.base = "" or m.token = "" then return
+    if request.tag = "pairingAck"
+        requestId = request.body.requestId
+        if request.attempts = invalid
+            request.attempts = 0
+            request.retryDeadline = m.clock.TotalMilliseconds() + 10000
+            m.pairingAckStates[requestId] = request.body.status
+        end if
+        ' A queued shown acknowledgement must never follow a dismissal.
+        if m.pairingAckStates[requestId] <> request.body.status then return
+        if m.clock.TotalMilliseconds() >= request.retryDeadline then return
+    end if
     if request.tag = "progress" and request.progressVersion = invalid
         queueProgress(request.body)
         return
@@ -111,6 +127,7 @@ sub finishRequest(event as object)
     else if data = invalid
         response.ok = false
         response.error = "Backend returned invalid JSON."
+        if pending.request.tag = "pairingAck" then retryAcknowledgement(pending.request)
     end if
     retryable = code <= 0 or code = 408 or code = 429 or code >= 500 or (code >= 200 and code < 300 and data = invalid)
     finishProgress(pending.request, response.ok, retryable)
@@ -145,6 +162,14 @@ sub finishProgress(request as object, success as boolean, retryable as boolean)
 end sub
 
 sub retryAcknowledgement(request as object)
+    if request.tag = "pairingAck"
+        if request.attempts >= 2 then return
+        if m.pairingAckStates[request.body.requestId] <> request.body.status then return
+        request.attempts++
+        due = m.clock.TotalMilliseconds() + 1000 * request.attempts
+        if due < request.retryDeadline then m.ackRetries.Push({request: request, due: due})
+        return
+    end if
     if request.tag <> "ack" then return
     attempts = 0
     if request.attempts <> invalid then attempts = request.attempts
@@ -168,6 +193,7 @@ sub tick()
     expired = []
     for each key in m.pending
         timeout = 15000
+        if m.pending[key].request.tag = "pairingAck" then timeout = 3000
         if m.pending[key].request.tag = "resolve" or m.pending[key].request.tag = "catalog" then timeout = 70000
         if m.pending[key].request.tag = "detail" or m.pending[key].request.tag = "episodes" or m.pending[key].request.tag = "issued" or m.pending[key].request.tag = "progress" then timeout = 45000
         if now - m.pending[key].started > timeout then expired.Push(key)
@@ -192,7 +218,7 @@ sub tick()
     end for
     if now - m.lastPoll >= 2000 and not hasPending("poll")
         m.lastPoll = now
-        startRequest({tag: "poll", path: "/roku/commands"})
+        startRequest({tag: "poll", path: "/roku/commands?connectionId=" + m.connectionId})
     end if
     snapshot = m.top.snapshot
     if snapshot = invalid then return
