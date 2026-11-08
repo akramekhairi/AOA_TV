@@ -8,6 +8,14 @@ sub networkLoop()
     m.top.ObserveField("request", m.port)
     m.registry = CreateObject("roRegistrySection", "AOATV")
     m.base = m.registry.Read("base")
+    ' Migrate only the recognized hosted origin once; preserve custom setup and
+    ' allow an administrator to restore the old origin after this migration.
+    if m.base = "https://aoa-tv-api.onrender.com" and m.registry.Read("azureMigration202611") <> "1"
+        m.base = "https://aoa-tv-akramekhairi.northcentralus.cloudapp.azure.com"
+        m.registry.Write("base", m.base)
+        m.registry.Write("azureMigration202611", "1")
+        m.registry.Flush()
+    end if
     m.token = m.registry.Read("token")
     ' One ephemeral ID per app run, never persisted or derived from a device ID.
     deviceInfo = CreateObject("roDeviceInfo")
