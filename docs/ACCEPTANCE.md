@@ -27,7 +27,7 @@ The developer installer reported success and ECP reported AOA TV as the active a
 - [ ] Native remote can browse categories, multiple pages, favorites, series, episodes, and English search.
 - [ ] Arabic category names, titles, details, and playback overlays are legible at TV distance.
 - [ ] Actual live channel, movie, and episode play with audio.
-- [ ] English external subtitles display; offset changes preserve playback position.
+- [x] English external subtitles display (user visually confirmed); offset changes preserve playback position.
 - [x] Movie pause/stop saves progress; native resume starts five seconds before saved position.
 - [ ] Completed episodes offer the next episode; live channels never appear in Continue Watching.
 - [ ] Two phone commands do not replay stale content or corrupt progress.
@@ -49,7 +49,7 @@ The developer installer reported success and ECP reported AOA TV as the active a
 - Hosted movie and series artwork returned HTTP 200; user confirmed phone images work. Some live logo sources may still fail.
 - Hosted Latin title image and on-TV movie details render without glyph boxes. Automated mixed Arabic/Latin/symbol font coverage passed; full mixed-language hardware matrix remains unverified.
 - 26 automated tests pass, including separate artwork/device rate budgets, protected pairing limits, subtitle matching/quota handling, and server Retry-After cooldown.
-- OpenSubtitles credentials configured privately and verified:69English results, strong match, cached SRT HTTP200. Roku build7 confirms the requested external track is current, mode On, captions not suppressed. Subtitle timing reload preserved pause and native position90seconds. Visible caption confirmation is pending household observation.
+- OpenSubtitles credentials configured privately and verified:69English results, strong match, cached SRT HTTP200. Roku build7 confirms the requested external track is current, mode On, captions not suppressed. Subtitle timing reload preserved pause and native position90seconds. User visually confirmed English captions on the actual TV. Off was verified with mode Off; restoring the selection returned the external track to current with mode On.
 - Native series ? season ? episode ? Play reached playing; Pause saved24seconds/1420seconds and added a fourth Continue Watching entry. Native movie resume began at17seconds from saved22seconds. Remote focus remained responsive after Back.
 - Native Live TV reached playing; Continue Watching count stayed4, excluding the channel.
 - Android/iPhone full acceptance matrix and actual audio quality checks remain unverified.
