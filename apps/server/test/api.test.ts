@@ -36,6 +36,9 @@ test('pairing, isolation, queued sessions, progress, acknowledgements and Arabic
   const playback=await call('GET',`/roku/playback/${second.id}`,roku);assert.equal(playback.statusCode,200);assert.ok(playback.json().url.startsWith('https:'));assert.equal((await call('GET',`/roku/playback/${second.id}`,phone.token)).statusCode,403);
   assert.equal((await call('POST',`/roku/commands/${second.id}/ack`,roku,{status:'acknowledged'})).statusCode,200);await call('POST',`/roku/commands/${second.id}/ack`,roku,{status:'failed',error:'late failure'});assert.equal((await call('GET',`/commands/${second.id}`,phone.token)).json().status,'acknowledged');
   const subtitleSearch=(await call('GET','/subtitles/search?contentId=xtream%3Aepisode%3A31',phone.token)).json();assert.equal(subtitleSearch.suggestedId,'demo-english');assert.equal((await call('POST','/subtitles/select',phone.token,{contentId:'xtream:episode:31',subtitleId:'demo-english',offset:1.5})).statusCode,200);
+  const saved=(await call('GET','/subtitles/selection?contentId=xtream%3Aepisode%3A31',phone.token)).json();assert.deepEqual(saved,{subtitleId:'demo-english',offset:1.5});
+  const track=(await call('GET',`/roku/playback/${second.id}`,roku)).json().subtitleUrl;const trackUrl=new URL(track);assert.ok(trackUrl.pathname.endsWith('.srt'));
+  const srt=await app.inject({method:'GET',url:trackUrl.pathname+trackUrl.search});assert.equal(srt.statusCode,200);assert.match(srt.body,/00:00:02,500/);
   await store.change(state=>{state.commands[first.id].expiresAt='2000-01-01T00:00:00.000Z';});assert.equal((await call('GET',`/commands/${first.id}`,phone.token)).json().status,'expired');
   assert.equal((await call('DELETE',`/devices/${phone.device.id}`,roku)).statusCode,200);assert.equal((await call('GET','/catalog',phone.token)).statusCode,401);
 });

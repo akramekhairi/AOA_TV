@@ -691,7 +691,12 @@ sub resolveCommand(response as object)
             return
         end if
         playback.position = m.currentPosition
+        ' Read the player now: a paused position event can precede the state callback.
+        playerPosition = m.video.position
+        if playerPosition <> invalid and playerPosition >= 0 then playback.position = playerPosition
+        if m.video.duration <> invalid and m.video.duration > 0 then m.currentDuration = m.video.duration
         m.reloadPaused = m.video.state = "paused"
+        print "AOA stage subtitle_reload position="; playback.position; " paused="; m.reloadPaused
     else
         m.reloadPaused = false
         if m.playback <> invalid then updateSnapshot(true)
@@ -748,6 +753,7 @@ sub resolveCommand(response as object)
     m.watchdog.control = "start"
     m.video.control = "play"
     print "AOA stage video_start"
+    captionDiagnostics("configured")
     updateSnapshot(true)
 end sub
 
@@ -776,6 +782,7 @@ sub videoPositionChanged()
 end sub
 
 sub subtitleTracksChanged()
+    captionDiagnostics("tracks_changed")
     if not m.selectSubtitleWhenAvailable then return
     for each track in m.video.availableSubtitleTracks
         if textValue(track["TrackName"]) = m.selectedSubtitleTrack
@@ -789,7 +796,24 @@ sub subtitleTracksChanged()
 end sub
 
 sub subtitleTrackChanged()
+    captionDiagnostics("track_changed")
     if m.selectedSubtitleTrack <> "" and m.video.currentSubtitleTrack = m.selectedSubtitleTrack then print "AOA stage subtitle_track_selected"
+end sub
+
+sub captionDiagnostics(stage as string)
+    availableCount = 0
+    metadataCount = 0
+    tracks = m.video.availableSubtitleTracks
+    if tracks <> invalid then availableCount = tracks.Count()
+    content = m.video.content
+    if content <> invalid
+        metadata = content.SubtitleTracks
+        if metadata <> invalid then metadataCount = metadata.Count()
+    end if
+    requested = m.selectedSubtitleTrack <> ""
+    selectedMatches = requested and m.video.subtitleTrack = m.selectedSubtitleTrack
+    currentMatches = requested and m.video.currentSubtitleTrack = m.selectedSubtitleTrack
+    print "AOA captions "; stage; " metadata="; metadataCount; " available="; availableCount; " requested="; requested; " selected="; selectedMatches; " current="; currentMatches; " mode="; m.video.globalCaptionMode; " suppressed="; m.video.suppressCaptions
 end sub
 
 sub videoStateChanged()
@@ -797,9 +821,21 @@ sub videoStateChanged()
     state = m.video.state
     print "AOA stage video_state "; state
     m.playState = state
+    if state = "playing"
+        if m.selectSubtitleWhenAvailable
+            m.video.subtitleTrack = m.selectedSubtitleTrack
+            m.video.globalCaptionMode = "On"
+            subtitleTracksChanged()
+        end if
+        captionDiagnostics("playing")
+    end if
     if state = "playing" and m.reloadPaused
         m.reloadPaused = false
         m.video.control = "pause"
+    end if
+    if state = "paused"
+        if m.video.position <> invalid then m.currentPosition = m.video.position
+        if m.video.duration <> invalid then m.currentDuration = m.video.duration
     end if
     if m.awaitingPlay <> invalid and (state = "playing" or state = "error" or state = "finished")
         command = m.awaitingPlay

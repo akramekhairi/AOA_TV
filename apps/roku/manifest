@@ -1,7 +1,7 @@
 title=AOA TV
 major_version=1
 minor_version=0
-build_version=5
+build_version=6
 mm_icon_focus_hd=pkg:/images/icon-hd.png
 mm_icon_focus_sd=pkg:/images/icon-sd.png
 ui_resolutions=hd
