@@ -1,7 +1,5 @@
-name: Keep backend responsive
+name: Check backend health (manual)
 on:
-  schedule:
-    - cron: '3,13,23,33,43,53 * * * *'
   workflow_dispatch:
 permissions:
   contents: read

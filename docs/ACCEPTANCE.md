@@ -17,7 +17,7 @@ This separates automated checks from tests requiring actual hardware/accounts. U
 - [x] Render uses Free and reports production health.
 - [ ] Supabase migrations/private Storage work; state survives API restart.
 - [x] Provider catalog requests succeed from Render.
-- [x] Real movie metadata produced69English results with a strong identity match; downloaded SRT returned HTTP200. Episode matching is covered by automated fixtures; real episode match remains unverified.
+- [x] Real movie metadata produced69English results with a strong identity match; downloaded SRT returned HTTP 200. Episode matching is covered by automated fixtures; real episode match remains unverified.
 - [ ] Cold starts, subtitle quota failures, and service interruptions display clear states.
 
 ## Roku hardware
@@ -49,7 +49,22 @@ The developer installer reported success and ECP reported AOA TV as the active a
 - Hosted movie and series artwork returned HTTP 200; user confirmed phone images work. Some live logo sources may still fail.
 - Hosted Latin title image and on-TV movie details render without glyph boxes. Automated mixed Arabic/Latin/symbol font coverage passed; full mixed-language hardware matrix remains unverified.
 - 26 automated tests pass, including separate artwork/device rate budgets, protected pairing limits, subtitle matching/quota handling, and server Retry-After cooldown.
-- OpenSubtitles credentials configured privately and verified:69English results, strong match, cached SRT HTTP200. Roku build7 confirms the requested external track is current, mode On, captions not suppressed. Subtitle timing reload preserved pause and native position90seconds. User visually confirmed English captions on the actual TV. Off was verified with mode Off; restoring the selection returned the external track to current with mode On.
-- Native series ? season ? episode ? Play reached playing; Pause saved24seconds/1420seconds and added a fourth Continue Watching entry. Native movie resume began at17seconds from saved22seconds. Remote focus remained responsive after Back.
+- OpenSubtitles credentials configured privately and verified:69English results, strong match, cached SRT HTTP 200. Roku build7 confirms the requested external track is current, mode On, captions not suppressed. Subtitle timing reload preserved pause and native position90seconds. User visually confirmed English captions on the actual TV. Off was verified with mode Off; restoring the selection returned the external track to current with mode On.
+- Native series ? season ? episode ? Play reached playing; Pause saved 24 seconds / 1420 seconds and added a fourth Continue Watching entry. Native movie resume began at17seconds from saved22seconds. Remote focus remained responsive after Back.
 - Native Live TV reached playing; Continue Watching count stayed4, excluding the channel.
 - Android/iPhone full acceptance matrix and actual audio quality checks remain unverified.
+
+## Azure cutover and pairing, 2026-11-08
+
+- Student VM: North Central US B2ats v2, one 64 GB P6 SSD, HTTPS through Caddy. Spending protection remains On; monthly $6 and first-year $80 alert budgets configured. Forecast $44.80 of $100 student credit using account-confirmed first-year allowances.
+- Controlled VM restart: Docker/app/Caddy recovered automatically; public readiness HTTP 200 in 661 ms.
+- Idle validation: no user app traffic from22:52:28 UTC through 23:23:09 UTC (30 minutes 41 seconds); local readiness HTTP 200 in 0.961 seconds. Subsequent public health/readiness returned HTTP 200 in 212 ms / 661 ms.
+- Startup collection latency fixed by singleflight persisted catalog loading; stale catalogs serve immediately while refreshing behind the scenes. Signed images use stable 15-minute signing buckets, preventing every phone poll from reloading unchanged images.
+- Azure catalog: 26,421 movies; categories, Arabic/mixed English-Arabic PNG, title image, and poster returned HTTP 200. After warmup, catalog/categories completed in 53 ms / 56 ms.
+- Provider auth from Azure succeeded; live/movie/series category queries returned 77 / 32 / 37 categories.
+- Roku build9 migrated the recognized saved Render origin once, preserving its token. Existing custom origins and later manual rollback are retained.
+- Existing favorites(3), visible Continue Watching(1), hidden items, device credentials and subtitle settings remain in the same Supabase database. Test playback restored the previously hidden test title to hidden afterward.
+- Actual Azure playback resumed at the saved position; English SRT HTTP 200 and native external-track current=true. During video, anonymous phone request showed the TV code; a temporary phone claimed it, the panel cleared, playback session was unchanged, and the test phone was revoked.
+- Phone API address controls removed; name empty with a placeholder, explicit name required, TV-code request cooldown supported. Existing token migration and trusted rollback pass automated tests.
+- 51 automated tests pass (26 server / 25 web), plus TypeScript/BrightScript, production build, generic Roku ZIP and public secret scans.
+- Pages now targets Azure; Render suspended and scheduled keep-alive disabled. Full physical Android/iPhone acceptance matrix remains unverified.

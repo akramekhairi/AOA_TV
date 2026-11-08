@@ -68,11 +68,11 @@ Use SSH/SCP to copy `infra/azure/compose.yaml`, `infra/azure/Caddyfile`, and pri
 
 ```sh
 cd /opt/aoa-tv
-sudo chmod 600 app.env deployment.env
-sudo docker compose --env-file deployment.env config --quiet
-sudo docker compose --env-file deployment.env pull
-sudo docker compose --env-file deployment.env up -d
-sudo docker compose --env-file deployment.env ps
+sudo chmod 600 app.env .env
+sudo docker compose --env-file .env config --quiet
+sudo docker compose --env-file .env pull
+sudo docker compose --env-file .env up -d
+sudo docker compose --env-file .env ps
 curl --fail http://127.0.0.1:3001/health
 curl --fail https://THE_AZURE_DNS_HOSTNAME/health
 ```
@@ -85,7 +85,7 @@ Test a real authenticated session, playlist, image, and playback through HTTPS b
 
 For updates, copy the current private `deployment.env` to a backup, change `APP_IMAGE` to the reviewed new digest, and run `pull` followed by `up -d`. Verify HTTPS health and playback. To roll back the container, restore the previous digest and repeat those commands. For a platform rollback, point the clients back to the existing Render HTTPS URL and verify Render's environment/CORS/signing keys before use. Do not delete the Azure VM until rollback is verified.
 
-After a reboot, inspect `systemctl status docker` and `docker compose --env-file deployment.env ps`. If HTTPS fails, check DNS, NSG, clock, and Caddy logs. Keep Caddy volumes when recreating containers. Avoid `down -v` during routine recovery. A lost VM can be recreated from the ARM template and the private runtime configuration, but Caddy will request new certificates; repeated recreation can hit ACME rate limits.
+After a reboot, inspect `systemctl status docker` and `docker compose --env-file .env ps`. If HTTPS fails, check DNS, NSG, clock, and Caddy logs. Keep Caddy volumes when recreating containers. Avoid `down -v` during routine recovery. A lost VM can be recreated from the ARM template and the private runtime configuration, but Caddy will request new certificates; repeated recreation can hit ACME rate limits.
 
 Configure Azure Cost Management budget alerts (for example 50%, 80%, and 95% of the verified available credit), and separately set calendar reminders before credit/benefit expiry. Budget alerts are notifications, not a spending cap. Monitor remaining credit and actual VM/disk/IP/bandwidth costs frequently, especially after playback tests. Re-estimate whenever usage or free allowance changes. A spending limit can disable the service when credit runs out, so it does not guarantee uptime.
 
@@ -95,8 +95,16 @@ Official references: [Azure for Students offer](https://azure.microsoft.com/en-u
 
 ## Current deployment evidence
 
-The user activated the student subscription on2026-11-08 with$100/$100credit and supplied the portal free-service table listing Linux B2ats_v2 750hours/month and two64GB P6 SSDs for12months. The dedicated user-created AOA_TV resource group has metadata in EastUS; the VM runs in NorthCentralUS. The inherited ABN-tag policy is DoNotEnforce; no billing number was invented.
+The user activated the student subscription on 2026-11-08 with $100/$100 credit and supplied the portal free-service table listing Linux B2ats_v2 750hours/month and two 64 GB P6 SSDs for12months. The dedicated user-created AOA_TV resource group has metadata in EastUS; the VM runs in NorthCentralUS. The inherited ABN-tag policy is DoNotEnforce; no billing number was invented.
 
-The estimate is$43.80/year for StandardIPv4 at$.005/hour, plus$1 incidental allowance. VM hours(max744/month) and oneP6 disk fit verified first-year allowances. Forecast$44.80 leaves$55.20 of credit, exceeding the20%reserve. Credit/benefit end is conservatively recorded as2027-11-08T00:00Z from fresh activation; verify the exact sponsorship timestamp and review before that date. These first-year allowances do not automatically renew with student credit.
+The estimate is $43.80/year for StandardIPv4 at $.005/hour, plus $1 incidental allowance. VM hours(max 744/month) and one P6 disk fit verified first-year allowances. Forecast $44.80 leaves $55.20 of credit, exceeding the20% reserve. Credit/benefit end is conservatively recorded as2027-11-08T00:00Z from fresh activation; verify the exact sponsorship timestamp and review before that date. These first-year allowances do not automatically renew with student credit.
 
-Public endpoint: https://aoa-tv-akramekhairi.northcentralus.cloudapp.azure.com . Runtime image is pinned to a public GHCR digest, with private settings under/opt/aoa-tv. Only ports80/443 and SSH from the configured administrative IPv4 are allowed. TRUST_PROXY=loopback,172.16.0.0/12 trusts only the local Docker proxy for client rate limits.
+Public endpoint: https://aoa-tv-akramekhairi.northcentralus.cloudapp.azure.com . Runtime image is pinned to a public GHCR digest, with private settings under /opt/aoa-tv. Only ports80/443 and SSH from the configured administrative IPv4 are allowed. TRUST_PROXY=loopback,172.16.0.0/12 trusts only the local Docker proxy for client rate limits.
+
+## Rollback and current status
+
+The active endpoint is https://aoa-tv-akramekhairi.northcentralus.cloudapp.azure.com. Render is suspended with configuration preserved. Scheduled GitHub pings are disabled; Azure VM does not scale to zero. Cost alerts use monthly $6 and annual $80 resource-group budgets, with 80/90/100-percent email thresholds. Budget alerts do not themselves stop resources; the student spending limit remains On.
+
+For rollback, resume the saved Render service, deploy the tested server version and verify readiness/provider access. Change the Pages VITE_API_URL variable back to the known Render origin and run the Pages workflow. Set Roku Settings backend origin back to Render while keeping its device token; the one-time azureMigration202611 flag prevents overriding this administrative choice on next launch. Trusted phone-origin migration preserves credentials in both directions and clears obsolete copies so logout cannot resurrect a token.
+
+The generic server image is pinned to a digest in the VM private .env. To update it, choose a successful Public server container workflow SHA/digest, update APP_IMAGE in that private file, then run sudo docker compose pull app and sudo docker compose up -d app under /opt/aoa-tv. Never print docker compose config because it expands credentials.
