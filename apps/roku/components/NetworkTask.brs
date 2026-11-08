@@ -11,6 +11,10 @@ sub networkLoop()
     m.token = m.registry.Read("token")
     m.pending = {}
     m.ackRetries = []
+    m.progressLatest = invalid
+    m.progressVersion = 0
+    m.progressDue = 0
+    m.progressAttempts = 0
     m.clock = CreateObject("roTimespan")
     m.clock.Mark()
     m.lastPoll = -2000
@@ -41,6 +45,9 @@ sub configure(request as object)
     end for
     m.pending = {}
     m.ackRetries = []
+    m.progressLatest = invalid
+    m.progressVersion++
+    m.progressAttempts = 0
     m.base = request.base
     if request.preserveToken <> true then m.token = request.token
     m.registry.Write("base", m.base)
@@ -48,11 +55,16 @@ sub configure(request as object)
     m.registry.Flush()
     m.lastPoll = -2000
     m.lastStatus = -10000
+    m.lastProgress = -15000
     m.top.response = {tag: "configured", configured: m.base <> "" and m.token <> ""}
 end sub
 
 sub startRequest(request as object)
     if m.base = "" or m.token = "" then return
+    if request.tag = "progress" and request.progressVersion = invalid
+        queueProgress(request.body)
+        return
+    end if
     transfer = CreateObject("roUrlTransfer")
     transfer.SetMessagePort(m.port)
     transfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
@@ -77,6 +89,7 @@ sub startRequest(request as object)
         m.pending[key] = {transfer: transfer, request: request, started: m.clock.TotalMilliseconds()}
     else
         retryAcknowledgement(request)
+        finishProgress(request, false, true)
         m.top.response = {tag: request.tag, ok: false, code: 0, error: "Cannot connect to backend.", context: request}
     end if
 end sub
@@ -99,7 +112,36 @@ sub finishRequest(event as object)
         response.ok = false
         response.error = "Backend returned invalid JSON."
     end if
+    retryable = code <= 0 or code = 408 or code = 429 or code >= 500 or (code >= 200 and code < 300 and data = invalid)
+    finishProgress(pending.request, response.ok, retryable)
     m.top.response = response
+end sub
+
+' Keep only the newest sample and serialize writes so retries cannot rewind progress.
+sub queueProgress(body as object)
+    m.progressVersion++
+    m.progressLatest = body
+    m.progressAttempts = 0
+    m.progressDue = m.clock.TotalMilliseconds()
+end sub
+
+sub finishProgress(request as object, success as boolean, retryable as boolean)
+    if request.tag <> "progress" then return
+    if request.progressVersion <> m.progressVersion then return
+    if success
+        m.progressLatest = invalid
+        m.progressAttempts = 0
+        print "AOA stage progress_saved"
+    else if retryable and m.progressAttempts < 5
+        m.progressAttempts++
+        delay = 1000 * (2 ^ m.progressAttempts)
+        if delay > 30000 then delay = 30000
+        m.progressDue = m.clock.TotalMilliseconds() + delay
+        print "AOA stage progress_retry"
+    else
+        m.progressLatest = invalid
+        print "AOA stage progress_failed"
+    end if
 end sub
 
 sub retryAcknowledgement(request as object)
@@ -127,6 +169,7 @@ sub tick()
     for each key in m.pending
         timeout = 15000
         if m.pending[key].request.tag = "resolve" or m.pending[key].request.tag = "catalog" then timeout = 70000
+        if m.pending[key].request.tag = "detail" or m.pending[key].request.tag = "episodes" or m.pending[key].request.tag = "issued" or m.pending[key].request.tag = "progress" then timeout = 45000
         if now - m.pending[key].started > timeout then expired.Push(key)
     end for
     for each key in expired
@@ -134,6 +177,7 @@ sub tick()
         pending.transfer.AsyncCancel()
         m.pending.Delete(key)
         retryAcknowledgement(pending.request)
+        finishProgress(pending.request, false, true)
         m.top.response = {tag: pending.request.tag, ok: false, code: 0, error: "Backend timed out. Check your connection.", context: pending.request}
     end for
     if m.base = "" or m.token = "" then return
@@ -152,12 +196,21 @@ sub tick()
     end if
     snapshot = m.top.snapshot
     if snapshot = invalid then return
+    if m.progressLatest <> invalid
+        if snapshot.status.sessionId <> m.progressLatest.sessionId
+            m.progressLatest = invalid
+            m.progressVersion++
+        end if
+    end if
     if now - m.lastStatus >= 10000 and not hasPending("heartbeat")
         m.lastStatus = now
         startRequest({tag: "heartbeat", path: "/roku/status", method: "POST", body: snapshot.status})
     end if
     if now - m.lastProgress >= 15000 and snapshot.progress <> invalid and not hasPending("progress")
         m.lastProgress = now
-        startRequest({tag: "progress", path: "/roku/progress", method: "PUT", body: snapshot.progress})
+        queueProgress(snapshot.progress)
+    end if
+    if m.progressLatest <> invalid and now >= m.progressDue and not hasPending("progress")
+        startRequest({tag: "progress", path: "/roku/progress", method: "PUT", body: m.progressLatest, progressVersion: m.progressVersion})
     end if
 end sub

@@ -29,6 +29,13 @@ if(mode==='inspect'){
  const result=await render('/services','POST',{type:'web_service',name:'aoa-tv-api',ownerId:owners[0].id,repo:'https://github.com/akramekhairi/AOA_TV',branch:'main',autoDeployTrigger:'off',envVars,serviceDetails:{runtime:'docker',plan:'free',region:'virginia',numInstances:1,healthCheckPath:'/health',envSpecificDetails:{dockerfilePath:'./apps/server/Dockerfile',dockerContext:'.',dockerCommand:''}}});
  const service=result.service||result;await writeFile('.local/render-service.json',JSON.stringify(service));console.log(JSON.stringify({id:service.id,url:service.serviceDetails?.url,plan:service.serviceDetails?.plan}));
  }
+}else if(mode==='sync-assets'){
+ const stored=JSON.parse(await readFile('.local/render-service.json','utf8'));
+ const hosts=(await readFile('.local/poster-hostnames.txt','utf8')).split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+ if(!hosts.length||hosts.some(host=>!/^[a-z0-9.-]+$/i.test(host)))throw new Error('Invalid private poster hostname inventory');
+ await render('/services/'+stored.id+'/env-vars/POSTER_ALLOWED_HOSTS','PUT',{value:[...new Set(hosts)].join(',')});
+ for(const key of ['OPENSUBTITLES_API_KEY','OPENSUBTITLES_USERNAME','OPENSUBTITLES_PASSWORD'])if(env[key])await render('/services/'+stored.id+'/env-vars/'+key,'PUT',{value:env[key]});
+ console.log('Updated approved poster hosts and any configured subtitle credentials.');
 }else if(mode==='redeploy'){
  const stored=JSON.parse(await readFile('.local/render-service.json','utf8'));
  const result=await render('/services/'+stored.id+'/deploys','POST',{clearCache:'do_not_clear'});

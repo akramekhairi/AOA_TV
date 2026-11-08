@@ -42,3 +42,20 @@ test('pairing, isolation, queued sessions, progress, acknowledgements and Arabic
 test('SRT positive and negative shifts preserve cue indices and clamp timestamps',()=>{
   const source='1\n00:00:01,500 --> 00:00:03,100\nHello\n';assert.match(shiftSrt(source,1.25),/00:00:02,750 --> 00:00:04,350/);assert.match(shiftSrt(source,-2),/00:00:00,000 --> 00:00:01,100/);
 });
+
+test('Roku-issued playback saves progress without hydration and resumes five seconds earlier',async(t)=>{
+  const {app,store,catalog}=await createApp(settings);t.after(()=>app.close());
+  const enrolled=await app.inject({method:'POST',url:'/api/v1/admin/enroll',headers:{'x-admin-key':settings.adminKey},payload:{name:'Roku'}});
+  const headers={authorization:`Bearer ${enrolled.json().token}`};
+  const call=(method:any,url:string,payload?:any)=>app.inject({method,url:'/api/v1'+url,headers,payload});
+  const get=catalog.get.bind(catalog);catalog.get=async(id,hydrate=true)=>{assert.equal(hydrate,false,'Progress and playback must not hydrate upstream metadata');return get(id,false);};
+  const play=(await call('POST','/commands',{action:'play',contentId:'xtream:movie:2'})).json();
+  assert.ok(play.sessionId);
+  assert.equal((await call('GET',`/roku/playback/${play.id}`)).statusCode,200);
+  assert.equal((await call('PUT','/roku/progress',{contentId:'xtream:movie:2',sessionId:play.sessionId,position:40,duration:300,completed:false})).statusCode,200);
+  assert.equal((await store.read()).progress['xtream:movie:2'].position,40);
+  await store.change(state=>{state.progress['xtream:movie:missing']={contentId:'xtream:movie:missing',position:20,duration:60,completed:false,updatedAt:new Date().toISOString()};});
+  const progress=(await call('GET','/progress')).json();assert.equal(progress.items.length,1);assert.equal(progress.items[0].position,40);
+  assert.equal((await call('POST','/commands',{action:'play',contentId:'xtream:movie:2'})).json().position,35);
+  assert.equal((await call('POST','/commands',{action:'play',contentId:'xtream:movie:2',position:0})).json().position,0);
+});

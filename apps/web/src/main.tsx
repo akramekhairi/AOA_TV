@@ -3,7 +3,8 @@ import {createRoot} from 'react-dom/client';
 import type {CatalogPage, Category, ContentItem, Device, PlaybackCommand, Progress, SubtitleResult, TvStatus, CommandAction} from '@aoa/shared';
 import {ApiError, request} from './api';
 import {revalidate} from './reconnect';
-import {backendUrl, clock, safeImage} from './utils';
+import {backendUrl, clock} from './utils';
+import {Poster} from './Poster';
 import './style.css';
 
 const savedBase = localStorage.getItem('aoa.backend') || import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || '';
@@ -68,7 +69,7 @@ function App() {
   const searchSubs = () => run(async () => { if(!selected) return; const signal=detail.current.signal; const result=await api<{results:SubtitleResult[];suggestedId?:string}>(`/subtitles/search?${new URLSearchParams({contentId:selected.id,query:subQuery})}`,{},signal); setSubs(result.results); const strong=result.results.find(s=>s.id===result.suggestedId && s.strongMatch); setSuggestion(strong?.id || ''); setSubtitleId(strong?.id || ''); if(strong) {await api('/subtitles/select',{method:'POST',body:JSON.stringify({contentId:selected.id,subtitleId:strong.id,offset})},signal);setNotice('Strong subtitle match selected automatically.');} });
   const applySubs = () => run(async () => {if(!selected) return; await api('/subtitles/select',{method:'POST',body:JSON.stringify({contentId:selected.id,subtitleId:subtitleId || null,offset})},detail.current.signal);setNotice(subtitleId?'Subtitle selection saved.':'Subtitles turned off.');});
   const title = (item:ContentItem) => <span dir="auto">{item.title}</span>;
-  const card = (item:ContentItem, p?:Progress) => <article className="card" key={item.id}><button className="poster" onClick={()=>open(item)} aria-label={`Open ${item.title}`}>{safeImage(item.poster)?<img loading="lazy" src={safeImage(item.poster)} alt="" onError={e=>{e.currentTarget.style.display='none';}}/>:<span className="placeholder">{item.type==='live'?'◉':'▷'}</span>}<span className="badge">{item.type}</span>{p && <progress value={p.position} max={p.duration || 1}/>}</button><button className="card-title" onClick={()=>open(item)}>{title(item)}</button><div className="meta">{p?`${clock(p.position)} watched`:item.year || 'Ready on your TV'}<button className="star" aria-label={favorites.some(f=>f.id===item.id)?'Remove favorite':'Add favorite'} disabled={busy} onClick={()=>favorite(item)}>{favorites.some(f=>f.id===item.id)?'♥':'♡'}</button></div></article>;
+  const card = (item:ContentItem, p?:Progress) => <article className="card" key={item.id}><button className="poster" onClick={()=>open(item)} aria-label={`Open ${item.title}`}><Poster url={item.poster} live={item.type==='live'}/><span className="badge">{item.type}</span>{p && <progress value={p.position} max={p.duration || 1}/>}</button><button className="card-title" onClick={()=>open(item)}>{title(item)}</button><div className="meta">{p?`${clock(p.position)} watched`:item.year || 'Ready on your TV'}<button className="star" aria-label={favorites.some(f=>f.id===item.id)?'Remove favorite':'Add favorite'} disabled={busy} onClick={()=>favorite(item)}>{favorites.some(f=>f.id===item.id)?'♥':'♡'}</button></div></article>;
   const currentProgress = progress.find(p=>p.contentId===selected?.id);
   const shown = tab === 'favorites'?favorites:tab === 'continue'?progress.filter(p=>p.item).map(p=>p.item!):catalog.items;
   return <div className="app"><header><a className="brand" href={import.meta.env.BASE_URL}><span className="logo">▷</span> AOA<span>TV</span></a><div className={`connection ${tv?.online?'online':''}`}><i/>{token?(tv ? (tv.online?'TV online':'TV offline') : 'Reconnecting…'):'Phone remote'}</div></header>

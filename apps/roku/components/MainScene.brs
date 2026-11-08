@@ -23,6 +23,11 @@ sub init()
     m.seen = {}
     m.seenOrder = []
     m.commandBusy = false
+    m.activeCommand = invalid
+    m.resolvingCommand = invalid
+    m.targetSession = ""
+    m.selectionSerial = 0
+    m.issuingPlay = false
     m.awaitingPlay = invalid
     m.playback = invalid
     m.lastSession = ""
@@ -65,15 +70,17 @@ end function
 
 function uri(value as string) as string
     result = ""
+    digits = "0123456789ABCDEF"
     bytes = CreateObject("roByteArray")
     bytes.FromAsciiString(value)
     for each byte in bytes
         if (byte >= 48 and byte <= 57) or (byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or byte = 45 or byte = 46 or byte = 95 or byte = 126
             result += Chr(byte)
         else
-            hex = UCase(byte.ToStr(16))
-            if Len(hex) = 1 then hex = "0" + hex
-            result += "%" + hex
+            ' Numeric ToStr takes a format string on Roku, not a numeric radix.
+            high = Int(byte / 16)
+            low = byte mod 16
+            result += "%" + Mid(digits, high + 1, 1) + Mid(digits, low + 1, 1)
         end if
     end for
     return result
@@ -87,6 +94,8 @@ sub request(tag as string, path as string, method = "GET" as string, body = inva
 end sub
 
 sub menuSelected()
+    m.selectionSerial++
+    m.issuingPlay = false
     m.details.visible = false
     m.nav = m.menu.itemSelected
     m.viewSerial++
@@ -211,8 +220,10 @@ sub itemSelected()
     else if row.kind = "season"
         showSeason(row.season)
     else if row.id <> invalid
-        m.selected = row
-        request("detail", "/content/" + uri(row.id))
+        m.selectionSerial++
+        showDetails(row)
+        print "AOA stage details_cached"
+        request("detail", "/content/" + uri(row.id), "GET", invalid, {selection: m.selectionSerial, id: row.id})
     end if
 end sub
 
@@ -271,6 +282,11 @@ sub configure()
     m.seenOrder = []
     m.commands = []
     m.commandBusy = false
+    m.activeCommand = invalid
+    m.resolvingCommand = invalid
+    m.targetSession = ""
+    m.selectionSerial++
+    m.issuingPlay = false
     m.awaitingPlay = invalid
     m.watchdog.control = "stop"
     m.viewSerial++
@@ -291,7 +307,7 @@ sub showMessage(title as string, message as string)
     dialog(title, message, ["OK"])
 end sub
 
-sub showDetails(item as object)
+sub showDetails(item as object, focus = true as boolean)
     m.selected = item
     m.detailTitle.uri = textValue(item.titleImage)
     m.descriptionImage.uri = textValue(item.descriptionImage)
@@ -320,22 +336,30 @@ sub showDetails(item as object)
         node = root.CreateChild("ContentNode")
         node.title = title
     end for
+    selectedIndex = m.detailButtons.itemFocused
     m.detailButtons.content = root
+    if not focus and selectedIndex >= 0 and selectedIndex < labels.Count() then m.detailButtons.jumpToItem = selectedIndex
     m.details.visible = true
-    m.detailButtons.SetFocus(true)
+    if focus then m.detailButtons.SetFocus(true)
 end sub
 
 sub detailSelected()
     action = m.detailActions[m.detailButtons.itemSelected]
     if action = "episodes"
+        m.selectionSerial++
         m.details.visible = false
-        request("episodes", "/series/" + uri(m.selected.id) + "/episodes")
+        m.list.SetFocus(true)
+        request("episodes", "/series/" + uri(m.selected.id) + "/episodes", "GET", invalid, {selection: m.selectionSerial})
     else if action = "favorite"
         toggleFavorite(m.selected)
     else if action = "play" or action = "restart"
-        body = {action: "play", contentId: m.selected.id}
+        if m.issuingPlay then return
+        m.issuingPlay = true
+        body = {action: "play", "contentId": m.selected.id}
         if action = "restart" then body.position = 0
-        request("issued", "/commands", "POST", body)
+        m.connection.text = "Requesting playback..."
+        print "AOA stage native_play_requested"
+        request("issued", "/commands", "POST", body, {selection: m.selectionSerial})
     end if
 end sub
 
@@ -418,8 +442,8 @@ sub networkResponse()
             if response.data.commands <> invalid
                 newestSession = ""
                 for each command in response.data.commands
-                    if command.action = "play" then newestSession = command.sessionId
                     if not m.seen.DoesExist(command.id)
+                        if command.action = "play" then newestSession = command.sessionId
                         m.seen[command.id] = true
                         m.seenOrder.Push(command.id)
                         m.commands.Push(command)
@@ -435,8 +459,9 @@ sub networkResponse()
                         if queued.sessionId = newestSession then currentQueue.Push(queued)
                     end for
                     m.commands = currentQueue
-                    if m.awaitingPlay <> invalid
-                        if m.awaitingPlay.sessionId <> newestSession then stopPlayback()
+                    m.targetSession = newestSession
+                    if m.activeCommand <> invalid
+                        if m.activeCommand.sessionId <> newestSession then stopPlayback()
                     end if
                 end if
             end if
@@ -448,11 +473,40 @@ sub networkResponse()
     end if
     if tag = "heartbeat" or tag = "progress" or tag = "ack"
         if not response.ok then m.connection.text = response.error
+        if tag = "progress" and response.ok and m.playback = invalid then refreshContinue()
         return
     end if
     if tag = "resolve"
         resolveCommand(response)
         return
+    end if
+    if tag = "detail"
+        extra = response.context.extra
+        if extra.selection <> m.selectionSerial or not m.details.visible then return
+        if m.selected.id <> extra.id then return
+        if response.ok
+            showDetails(response.data, false)
+            print "AOA stage details_enriched"
+        else
+            m.connection.text = "Details unavailable. You can still play or retry this title."
+            print "AOA stage details_unavailable"
+        end if
+        return
+    end if
+    if tag = "issued"
+        print "AOA stage native_play_response HTTP "; response.code
+        m.issuingPlay = false
+        if response.context.extra.selection <> m.selectionSerial
+            if response.ok and not m.seen.DoesExist(response.data.id)
+                m.seen[response.data.id] = true
+                m.seenOrder.Push(response.data.id)
+                request("ack", "/roku/commands/" + uri(response.data.id) + "/ack", "POST", {status: "failed", error: "Playback cancelled before startup."})
+            end if
+            return
+        end if
+    end if
+    if tag = "episodes"
+        if response.context.extra.selection <> m.selectionSerial or response.context.view <> m.viewSerial then return
     end if
     if not response.ok
         showMessage("Request failed", response.error)
@@ -495,8 +549,6 @@ sub networkResponse()
         showMessage("Catalog refreshed", "Choose Live, Movies, or Series to browse the updated catalog.")
     else if tag = "issued"
         m.connection.text = "Playback requested..."
-    else if tag = "detail"
-        showDetails(data)
     else if tag = "episodes"
         m.episodes = data.items
         showSeasons()
@@ -532,6 +584,7 @@ sub nextCommand()
     if m.commandBusy or m.commands.Count() = 0 then return
     command = m.commands.Shift()
     m.commandBusy = true
+    m.activeCommand = command
     expires = CreateObject("roDateTime")
     expires.FromISO8601String(command.expiresAt)
     now = CreateObject("roDateTime")
@@ -540,6 +593,10 @@ sub nextCommand()
         return
     end if
     if command.action = "play"
+        m.targetSession = command.sessionId
+        m.resolvingCommand = command
+        m.connection.text = "Resolving stream... Press Back to cancel."
+        print "AOA stage resolve_started"
         request("resolve", "/roku/playback/" + uri(command.id), "GET", invalid, command)
         return
     end if
@@ -552,6 +609,7 @@ sub nextCommand()
         return
     end if
     if command.action = "subtitles"
+        m.resolvingCommand = command
         request("resolve", "/roku/playback/" + uri(command.id), "GET", invalid, command)
         return
     else if command.action = "pause"
@@ -584,12 +642,24 @@ sub finishCommand(command as object, success as boolean, message = "" as string)
     status = "acknowledged"
     if not success then status = "failed"
     request("ack", "/roku/commands/" + uri(command.id) + "/ack", "POST", {status: status, error: message})
-    m.commandBusy = false
-    nextCommand()
+    if m.activeCommand <> invalid
+        if m.activeCommand.id = command.id
+            m.activeCommand = invalid
+            m.resolvingCommand = invalid
+            m.commandBusy = false
+            nextCommand()
+        end if
+    end if
 end sub
 
 sub resolveCommand(response as object)
     command = response.context.extra
+    if m.activeCommand = invalid then return
+    if m.activeCommand.id <> command.id or m.targetSession <> command.sessionId
+        print "AOA stage resolve_stale"
+        return
+    end if
+    m.resolvingCommand = invalid
     if not response.ok
         finishCommand(command, false, response.error)
         showMessage("Cannot start playback", response.error)
@@ -664,6 +734,8 @@ sub resolveCommand(response as object)
     m.currentPosition = playback.position
     m.currentDuration = 0
     m.playState = "buffering"
+    m.selectionSerial++
+    m.details.visible = false
     if m.top.dialog <> invalid then m.top.dialog.close = true
     m.video.content = content
     m.video.visible = true
@@ -672,6 +744,7 @@ sub resolveCommand(response as object)
     m.awaitingPlay = command
     m.watchdog.control = "start"
     m.video.control = "play"
+    print "AOA stage video_start"
     updateSnapshot(true)
 end sub
 
@@ -684,11 +757,12 @@ sub playbackTimedOut()
     m.playback = invalid
     m.video.control = "stop"
     m.video.visible = false
-    m.list.SetFocus(true)
+    restoreBrowseFocus()
     updateSnapshot(true)
     showMessage("Stream timed out", "The stream did not start within 25 seconds. Check the provider connection or try another title.")
     m.playingTitle.visible = false
     finishCommand(command, false, "Stream did not reach playing state within 25 seconds.")
+    refreshContinue()
 end sub
 
 sub videoPositionChanged()
@@ -703,6 +777,7 @@ sub videoStateChanged()
     m.playingTitle.visible = m.video.visible and m.video.state <> "error" and m.video.state <> "finished" and m.video.state <> "stopped"
     if m.playback = invalid then return
     state = m.video.state
+    print "AOA stage video_state "; state
     m.playState = state
     if m.awaitingPlay <> invalid and (state = "playing" or state = "error" or state = "finished")
         command = m.awaitingPlay
@@ -720,23 +795,25 @@ sub videoStateChanged()
     updateSnapshot(true)
     if state = "error"
         m.video.visible = false
-        m.list.SetFocus(true)
+        restoreBrowseFocus()
         showMessage("Stream cannot play", "The stream is disconnected, unavailable, or uses a codec/container unsupported by this Roku. Try another title. Error " + textValue(m.video.errorCode) + ".")
         m.playback = invalid
         updateSnapshot(true)
+        refreshContinue()
     else if state = "finished"
         m.video.visible = false
-        m.list.SetFocus(true)
+        restoreBrowseFocus()
         m.playback = invalid
         updateSnapshot(true)
+        refreshContinue()
     end if
 end sub
 
 sub updateSnapshot(sendNow as boolean)
     status = {online: true, state: m.playState}
     if m.lastSession <> ""
-        status.sessionId = m.lastSession
-        status.contentId = m.lastContent
+        status["sessionId"] = m.lastSession
+        status["contentId"] = m.lastContent
     end if
     progress = invalid
     if m.playback <> invalid
@@ -744,14 +821,14 @@ sub updateSnapshot(sendNow as boolean)
         duration = m.currentDuration
         if position = invalid or position < 0 then position = 0
         if duration = invalid or duration < 0 then duration = 0
-        status.contentId = m.playback.item.id
-        status.sessionId = m.playback.sessionId
+        status["contentId"] = m.playback.item.id
+        status["sessionId"] = m.playback.sessionId
         status.position = position
         status.duration = duration
         if m.playback.item.type <> "live"
             completed = m.playState = "finished"
             if duration > 0 and position / duration >= 0.95 then completed = true
-            progress = {contentId: status.contentId, sessionId: status.sessionId, position: position, duration: duration, completed: completed}
+            progress = {"contentId": status.contentId, "sessionId": status.sessionId, position: position, duration: duration, completed: completed}
         end if
     end if
     m.net.snapshot = {status: status, progress: progress}
@@ -764,16 +841,29 @@ end sub
 sub stopPlayback()
     m.playingTitle.visible = false
     pending = m.awaitingPlay
+    if pending = invalid then pending = m.resolvingCommand
     m.awaitingPlay = invalid
+    m.resolvingCommand = invalid
     m.watchdog.control = "stop"
     m.playState = "stopped"
     updateSnapshot(true)
     m.playback = invalid
     m.video.control = "stop"
     m.video.visible = false
-    m.list.SetFocus(true)
+    restoreBrowseFocus()
     updateSnapshot(true)
     if pending <> invalid then finishCommand(pending, false, "Playback cancelled before the stream started.")
+    refreshContinue()
+end sub
+
+sub restoreBrowseFocus()
+    m.details.visible = false
+    m.selectionSerial++
+    m.list.SetFocus(true)
+end sub
+
+sub refreshContinue()
+    if m.configured and m.nav = 0 and not m.video.visible and not m.details.visible then request("continue", "/progress")
 end sub
 
 function onKeyEvent(key as string, press as boolean) as boolean
@@ -789,8 +879,15 @@ function onKeyEvent(key as string, press as boolean) as boolean
         end if
         return false
     end if
+    if key = "back" and (m.resolvingCommand <> invalid or m.issuingPlay)
+        m.selectionSerial++
+        m.issuingPlay = false
+        stopPlayback()
+        return true
+    end if
     if m.details.visible
         if key = "back"
+            m.selectionSerial++
             m.details.visible = false
             m.list.SetFocus(true)
             return true

@@ -59,14 +59,31 @@ export class Catalog {
     return {items:found.slice((page-1)*pageSize,page*pageSize),total:found.length,page,pageSize};
   }
   async categoryList(type?:string) {await this.ensure();if(type&&!types.includes(type as any))throw new HttpError(400,'Invalid category type');return this.categories.filter(c=>!type||c.type===type);}
-  async get(id:string):Promise<ContentItem> {
+  async stored(id:string):Promise<ContentItem|undefined> {
+    if(this.config.demo)return this.get(id,false);
+    const local=this.items.get(id);if(local)return local;
+    if(!this.store?.client)return undefined;
+    if(id.startsWith('xtream:episode:')){const result=await this.store.client.from('aoa_content').select('payload').eq('id',id).maybeSingle();if(result.error)throw new HttpError(503,'Catalog metadata storage unavailable');if(result.data){const item=result.data.payload as ContentItem;this.items.set(id,item);return item;}return undefined;}
+    const result=await this.store.client.from('aoa_catalog').select('payload').eq('id','top').maybeSingle();if(result.error)throw new HttpError(503,'Catalog cache unavailable');
+    for(const item of (result.data?.payload.items||[]) as ContentItem[])if(!this.items.has(item.id))this.items.set(item.id,item);
+    return this.items.get(id);
+  }
+  async storedEpisodes(seriesId:string):Promise<ContentItem[]> {
+    if(this.config.demo)return this.seriesEpisodes(seriesId);
+    const cached=this.episodes.get(seriesId);if(cached)return cached.items;
+    if(!this.store?.client)return [];
+    const result=await this.store.client.from('aoa_content').select('payload').eq('payload->>seriesId',seriesId).limit(1000);
+    if(result.error)throw new HttpError(503,'Episode metadata unavailable');
+    return (result.data||[]).map(row=>row.payload as ContentItem).sort((a,b)=>(a.season||0)-(b.season||0)||(a.episode||0)-(b.episode||0));
+  }
+  async get(id:string,hydrate=true):Promise<ContentItem> {
     await this.ensure();let item=this.items.get(id);
     // Episode IDs don't contain the parent series. Persist discovered metadata so restarts
     // never require scanning every series on the provider.
     if(!item&&id.startsWith('xtream:episode:')&&this.store?.client){const result=await this.store.client.from('aoa_content').select('payload').eq('id',id).maybeSingle();if(result.error)throw new HttpError(503,'Catalog metadata storage unavailable');if(result.data){item=result.data.payload as ContentItem;this.items.set(id,item);}}
     if(!item&&id.startsWith('xtream:episode:')&&this.config.demo){await this.seriesEpisodes('xtream:series:3');item=this.items.get(id);}
     if(!item)throw new HttpError(404,'Content not found');
-    if(!this.config.demo && item.type==='movie' && !this.hydrated.has(id)) {
+    if(hydrate && !this.config.demo && item.type==='movie' && !this.hydrated.has(id)) {
       const detail=await this.provider('get_vod_info',{vod_id:item.providerId}); const info=detail.info||{};
       item={...item,description:info.plot||item.description,poster:info.movie_image||item.poster,imdbId:info.imdb_id||item.imdbId,tmdbId:info.tmdb_id?String(info.tmdb_id):item.tmdbId,year:Number(String(info.releasedate||'').slice(0,4))||item.year};this.items.set(id,item);this.hydrated.add(id);
     }

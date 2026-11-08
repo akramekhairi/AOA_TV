@@ -10,6 +10,8 @@ The left menu contains Continue Watching, Favorites, Live, Movies, Series, Searc
 
 All API transfers and registry access run on a Task. Commands poll every two seconds; online status posts every ten seconds and progress every fifteen seconds plus state changes. Playback uses Roku's native Video node and direct streams, with external SRT caption tracks. Subtitle changes reload the stream at the actual current position and preserve pause. A play command is acknowledged after the player reaches `playing`; error or a 25-second startup timeout fails it. HTTP acknowledgement failures retry with backoff without replaying the command. Expired commands and mismatched playback sessions are rejected locally as well as by the backend.
 
+Details open immediately from cached catalog data and enrich in the background. Back cancels pending startup; leaving playback restores the visible catalog and refreshes Continue Watching. Progress writes serialize the newest sample, retain the final sample after exit, and retry transient failures up to five times with bounded backoff. Session changes discard obsolete samples. Wire JSON explicitly preserves `contentId` and `sessionId` casing; BrightScript's unquoted associative-array keys otherwise become lowercase. Debug output uses safe stage names, HTTP codes, and player states without media titles, URLs, or credentials.
+
 ## Device verification
 
 BrightScript static checking does not emulate Roku hardware. Before using a provider in production, sideload and verify:

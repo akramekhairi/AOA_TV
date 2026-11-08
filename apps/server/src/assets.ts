@@ -1,16 +1,74 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+﻿import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { readFile, mkdtemp, writeFile, mkdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { lookup } from 'node:dns/promises';
+import type { LookupAddress } from 'node:dns';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { isIP } from 'node:net';
 import sharp from 'sharp';
 import type { Category, ContentItem } from '@aoa/shared';
 import type { Config } from './config.js';
 import type { Store } from './store.js';
 import { Catalog, HttpError } from './catalog.js';
 export interface Asset {bytes:Buffer;mime:string}
+const MAX_POSTER_BYTES=10*1024*1024;
+const RENDER_SETTINGS={revision:4,family:'Noto Sans Arabic, Noto Sans, Noto Sans Symbols, Noto Sans Symbols 2',titleSize:42,descriptionSize:26,width:1100,dpi:72,align:'right',wrap:'word',foreground:'white',posterWidth:600,posterHeight:900,posterQuality:82};
+export function publicPosterAddress(address:string):boolean {
+  if(isIP(address)===6){const [first,second=0]=address.split(':').map(value=>parseInt(value||'0',16));return first>=0x2000&&first<=0x3fff&&first!==0x2002&&!(first===0x2001&&(second<0x200||second===0xdb8))&&!(first===0x3fff&&second<0x1000);}
+  if(isIP(address)!==4)return false;
+  const [a,b,c]=address.split('.').map(Number);
+  return !(a===0||a===10||a===127||a>=224||a===169&&b===254||a===172&&b>=16&&b<=31||a===192&&(b===168||b===0||b===2)||a===100&&b>=64&&b<=127||a===198&&(b===18||b===19||b===51&&c===100)||a===203&&b===0&&c===113);
+}
+type PosterResponse={status:number;location?:string;length?:string;body:AsyncIterable<Uint8Array>;destroy:()=>void};
+type PosterDependencies={resolve:(host:string)=>Promise<LookupAddress[]>;request:(url:URL,address:LookupAddress,signal:AbortSignal)=>Promise<PosterResponse>};
+const posterDependencies:PosterDependencies={resolve:host=>lookup(host,{all:true}),request:(url,address,signal)=>new Promise((resolve,reject)=>{
+  // Pin the validated address to the socket; a second DNS lookup must not bypass SSRF checks.
+  const request=(url.protocol==='https:'?httpsRequest:httpRequest)(url,{signal,lookup:(_host,options,callback)=>{if(options.all)(callback as any)(null,[address]);else callback(null,address.address,address.family);}},response=>resolve({status:response.statusCode||0,location:response.headers.location,length:response.headers['content-length'],body:response,destroy:()=>response.destroy()}));
+  request.on('error',reject);request.end();
+})};
+export async function fetchPosterBytes(source:string,allowedHosts:string[],dependencies:PosterDependencies=posterDependencies):Promise<Buffer>{
+  const allowed=new Set(allowedHosts.map(host=>host.trim().toLowerCase()).filter(Boolean));
+  const signal=AbortSignal.timeout(15000);let url:URL;
+  try{url=new URL(source);}catch{throw new HttpError(400,'Unsupported poster URL');}
+  for(let redirects=0;redirects<=3;redirects++){
+    if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.port&&url.port!==(url.protocol==='https:'?'443':'80'))throw new HttpError(400,'Unsupported poster URL');
+    if(!allowed.has(url.hostname.toLowerCase()))throw new HttpError(403,'Poster hostname is not allowed');
+    const host=url.hostname.replace(/^\[|\]$/g,'');
+    const addresses=await dependencies.resolve(host);
+    if(!addresses.length||addresses.some(address=>!publicPosterAddress(address.address)))throw new HttpError(403,'Private poster address blocked');
+    signal.throwIfAborted();const response=await dependencies.request(url,addresses[0],signal);
+    if([301,302,303,307,308].includes(response.status)){
+      response.destroy();if(redirects===3||!response.location)throw new HttpError(502,'Poster redirect limit exceeded');
+      let next:URL;try{next=new URL(response.location,url);}catch{throw new HttpError(502,'Invalid poster redirect');}
+      if(url.protocol==='https:'&&next.protocol==='http:')throw new HttpError(403,'Insecure poster redirect');url=next;continue;
+    }
+    if(response.status<200||response.status>=300){response.destroy();throw new HttpError(502,'Poster unavailable');}
+    if(Number(response.length)>MAX_POSTER_BYTES){response.destroy();throw new HttpError(413,'Poster too large');}
+    let size=0;const chunks:Uint8Array[]=[];
+    try{for await(const chunk of response.body){signal.throwIfAborted();size+=chunk.length;if(size>MAX_POSTER_BYTES)throw new HttpError(413,'Poster too large');chunks.push(chunk);}}finally{response.destroy();}
+    return Buffer.concat(chunks);
+  }
+  throw new HttpError(502,'Poster unavailable');
+}
 export class Assets {
-  private cache=new Map<string,Asset>();private size=0;private font!:Buffer;private fontHash='';private pending=new Map<string,Promise<Asset>>();private running=0;private waiters:(()=>void)[]=[];private uploads=Promise.resolve();
+  private cache=new Map<string,Asset>();private size=0;private fontHash='';private pending=new Map<string,Promise<Asset>>();private running=0;private waiters:(()=>void)[]=[];private uploads=Promise.resolve();
   constructor(private config:Config,private store:Store,private catalog:Catalog) {}
-  async init(){this.font=await readFile(this.config.fontPath);if(this.font.length<10000)throw new Error('Arabic font is invalid');this.fontHash=createHash('sha256').update(this.font).digest('hex').slice(0,12);}
+  async init(){
+    const directory=dirname(this.config.fontPath);const paths=[this.config.fontPath,join(directory,'NotoSans-Regular.ttf'),join(directory,'NotoSansSymbols-Regular.ttf'),join(directory,'NotoSansSymbols2-Regular.ttf')];
+    const hash=createHash('sha256').update(JSON.stringify(RENDER_SETTINGS)).update(JSON.stringify(sharp.versions));
+    for(const path of paths){const bytes=await readFile(path);if(bytes.length<10000)throw new Error('Bundled render font is invalid');hash.update(bytes);}
+    this.fontHash=hash.digest('hex');
+    const runtime=await mkdtemp(join(tmpdir(),'aoa-fonts-'));const cache=join(runtime,'cache');await mkdir(cache);
+    const escape=(value:string)=>value.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]!));
+    const fontconfig=join(runtime,'fonts.conf');
+    await writeFile(fontconfig,`<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig><dir>${escape(directory)}</dir><cachedir>${escape(cache)}</cachedir><alias><family>sans-serif</family><prefer><family>Noto Sans Arabic</family><family>Noto Sans</family><family>Noto Sans Symbols</family><family>Noto Sans Symbols 2</family></prefer></alias></fontconfig>`);
+    process.env.FONTCONFIG_FILE=fontconfig;
+    // Explicitly register every bundled face with Pango, including platforms where
+    // fontconfig was initialized before this service started.
+    for(const path of paths)await sharp({text:{text:'A',fontfile:path,font:'sans-serif 12',rgba:true}}).png().toBuffer();
+  }
   private key(descriptor:string){return createHash('sha256').update(`render-v2:${this.fontHash}:${descriptor}`).digest('hex');}
   private signature(key:string,expires:string){return createHmac('sha256',this.config.signingKey).update(`${key}.${expires}`).digest('hex');}
   url(descriptor:string,ttl=3600){const key=Buffer.from(descriptor).toString('base64url');const expires=String(Math.floor(Date.now()/1000)+ttl);return `${this.config.publicUrl}/api/v1/assets/${key}?e=${expires}&s=${this.signature(key,expires)}`;}
@@ -45,14 +103,14 @@ export class Assets {
       const [,kind,...parts]=descriptor.split(':');const text=parts.join(':');if(text.length>1800)throw new HttpError(400,'Text too long');
       // Pango/HarfBuzz shapes Arabic using the explicitly supplied bundled font.
       const escaped=text.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]!));
-      const bytes=await sharp({text:{text:`<span foreground="white">${escaped}</span>`,font:`Noto Sans Arabic ${kind==='title'?42:26}`,fontfile:this.config.fontPath,width:1100,rgba:true,align:'right',wrap:'word',dpi:72}}).png().toBuffer();asset={bytes,mime:'image/png'};
+      const bytes=await sharp({text:{text:`<span foreground="white">${escaped}</span>`,font:`${RENDER_SETTINGS.family} ${kind==='title'?RENDER_SETTINGS.titleSize:RENDER_SETTINGS.descriptionSize}`,fontfile:this.config.fontPath,width:RENDER_SETTINGS.width,rgba:true,align:'right',wrap:'word',dpi:RENDER_SETTINGS.dpi}}).png().toBuffer();asset={bytes,mime:'image/png'};
     }else if(descriptor.startsWith('poster:')) {
-      const item=await this.catalog.get(descriptor.slice(7));if(!item.poster)throw new HttpError(404,'Poster not found');const url=new URL(item.poster);if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw new HttpError(400,'Unsupported poster URL');
-      const allowed=(process.env.POSTER_ALLOWED_HOSTS||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);if(this.config.xtreamUrl)allowed.push(new URL(this.config.xtreamUrl).hostname.toLowerCase());if(!allowed.includes(url.hostname.toLowerCase()))throw new HttpError(403,'Poster hostname is not allowed');
-      const addresses=await lookup(url.hostname,{all:true});if(addresses.some(a=>a.family===6?!/^[23][0-9a-f]{0,3}:/i.test(a.address):/^(127\.|10\.|192\.168\.|169\.254\.|0\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|198\.(18|19)\.|192\.0\.|2[2-5]\d\.)/.test(a.address)))throw new HttpError(403,'Private poster address blocked');
-      // URLs originate exclusively from the configured provider, never from client input.
-      const response=await fetch(url,{signal:AbortSignal.timeout(15000),redirect:'error'});if(!response.ok)throw new HttpError(502,'Poster unavailable');const max=10*1024*1024;let size=0;const chunks:Uint8Array[]=[];if(!response.body)throw new HttpError(502,'Poster unavailable');for await(const chunk of response.body as any){size+=chunk.length;if(size>max)throw new HttpError(413,'Poster too large');chunks.push(chunk);}const bytes=await sharp(Buffer.concat(chunks)).resize({width:600,height:900,fit:'inside',withoutEnlargement:true}).jpeg({quality:82}).toBuffer();asset={bytes,mime:'image/jpeg'};
+      const item=await this.catalog.get(descriptor.slice(7),false);if(!item.poster)throw new HttpError(404,'Poster not found');
+      const allowed=(process.env.POSTER_ALLOWED_HOSTS||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);if(this.config.xtreamUrl)allowed.push(new URL(this.config.xtreamUrl).hostname.toLowerCase());
+      const input=await fetchPosterBytes(item.poster,allowed);
+      try{const bytes=await sharp(input,{limitInputPixels:40_000_000,pages:1,failOn:'warning'}).resize({width:600,height:900,fit:'inside',withoutEnlargement:true}).jpeg({quality:82}).toBuffer();asset={bytes,mime:'image/jpeg'};}catch{throw new HttpError(502,'Invalid poster image');}
     }else throw new HttpError(404,'Asset not found');
     await this.put(descriptor,asset);return asset;
   }
 }
+
