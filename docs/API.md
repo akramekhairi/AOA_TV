@@ -28,8 +28,11 @@ Base `/api/v1`. JSON requests/responses; authenticated requests use `Authorizati
 - PUT `/roku/progress` Roku only body `{contentId,position,duration,completed,sessionId}` → `{ok:true}`; stale sessions rejected; every 15sec and state changes.
 
 ## Subtitles
+- GET `/subtitles/selection?contentId=` returns `{subtitleId:string|null,offset:number}` so phones retain the saved selection and timing when reopening details.
 - GET `/subtitles/search?contentId=&query=` → `{results:SubtitleResult[],suggestedId?:string}`; only movies/episodes.
 - POST `/subtitles/select` body `{contentId,subtitleId:string|null,offset?:number}` → `{ok:true}`. Persists selection; when this item is playing sends subtitles command to reload at current position. No strong match means user must choose a result.
 - Image/subtitle asset URLs are signed and expiring, returned by catalog/playback; no auth header required on those URLs.
 
 Health GET `/health` → `{ok:true,demo:boolean}`. Demo mode uses fictional fixtures and in-memory state only; explicit DEMO_MODE=true, never silently falls back from production storage errors.
+
+Normal API requests use a separate budget per hashed device token (240/minute). Signed artwork (1200/minute) and health checks (120/minute) have independent IP budgets. Pairing and administrator routes retain strict IP limits. Clients honor `Retry-After` on HTTP 429; playback URLs and tokens are never rate-limit keys or logs.

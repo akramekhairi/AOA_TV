@@ -42,6 +42,7 @@ sub init()
     m.episodes = []
     m.reloadPaused = false
     m.selectedSubtitleTrack = ""
+    m.nativeSubtitleTrack = ""
     m.selectSubtitleWhenAvailable = false
     m.currentPosition = 0
     m.currentDuration = 0
@@ -723,6 +724,7 @@ sub resolveCommand(response as object)
     content.live = playback.item.type = "live"
     if not content.live and playback.position > 0 then content.PlayStart = playback.position
     m.selectedSubtitleTrack = textValue(playback.subtitleUrl)
+    m.nativeSubtitleTrack = ""
     m.selectSubtitleWhenAvailable = m.selectedSubtitleTrack <> ""
     if m.selectSubtitleWhenAvailable
         ' Native metadata AA keys are case-sensitive; unquoted keys become lowercase.
@@ -784,9 +786,21 @@ end sub
 sub subtitleTracksChanged()
     captionDiagnostics("tracks_changed")
     if not m.selectSubtitleWhenAvailable then return
+    first = true
     for each track in m.video.availableSubtitleTracks
-        if textValue(track["TrackName"]) = m.selectedSubtitleTrack
-            m.video.subtitleTrack = m.selectedSubtitleTrack
+        nativeTrack = subtitleTrackField(track, "TrackName")
+        description = subtitleTrackField(track, "Description")
+        if first or nativeTrack = m.selectedSubtitleTrack or description = "Selected English subtitles"
+            keys = []
+            for each key in track
+                keys.Push(key)
+            end for
+            print "AOA caption_track keys="; FormatJson(keys); " desired="; nativeTrack = m.selectedSubtitleTrack; " marker="; description = "Selected English subtitles"; " id_present="; nativeTrack <> ""
+        end if
+        first = false
+        if nativeTrack <> "" and (nativeTrack = m.selectedSubtitleTrack or description = "Selected English subtitles")
+            m.nativeSubtitleTrack = nativeTrack
+            m.video.subtitleTrack = nativeTrack
             m.video.globalCaptionMode = "On"
             m.selectSubtitleWhenAvailable = false
             print "AOA stage subtitle_track_available"
@@ -795,9 +809,18 @@ sub subtitleTracksChanged()
     end for
 end sub
 
+function subtitleTrackField(track as object, name as string) as string
+    for each key in track
+        if LCase(key) = LCase(name) then return textValue(track[key])
+    end for
+    return ""
+end function
+
 sub subtitleTrackChanged()
     captionDiagnostics("track_changed")
-    if m.selectedSubtitleTrack <> "" and m.video.currentSubtitleTrack = m.selectedSubtitleTrack then print "AOA stage subtitle_track_selected"
+    target = m.selectedSubtitleTrack
+    if m.nativeSubtitleTrack <> "" then target = m.nativeSubtitleTrack
+    if target <> "" and m.video.currentSubtitleTrack = target then print "AOA stage subtitle_track_selected"
 end sub
 
 sub captionDiagnostics(stage as string)
@@ -811,9 +834,13 @@ sub captionDiagnostics(stage as string)
         if metadata <> invalid then metadataCount = metadata.Count()
     end if
     requested = m.selectedSubtitleTrack <> ""
-    selectedMatches = requested and m.video.subtitleTrack = m.selectedSubtitleTrack
-    currentMatches = requested and m.video.currentSubtitleTrack = m.selectedSubtitleTrack
+    target = m.selectedSubtitleTrack
+    if m.nativeSubtitleTrack <> "" then target = m.nativeSubtitleTrack
+    selectedMatches = requested and m.video.subtitleTrack = target
+    currentMatches = requested and m.video.currentSubtitleTrack = target
     print "AOA captions "; stage; " metadata="; metadataCount; " available="; availableCount; " requested="; requested; " selected="; selectedMatches; " current="; currentMatches; " mode="; m.video.globalCaptionMode; " suppressed="; m.video.suppressCaptions
+    current = textValue(m.video.currentSubtitleTrack)
+    if CreateObject("roRegex", "^(mkv|dvb|eia608|ism)/[A-Za-z0-9_.-]{1,40}$", "").IsMatch(current) then print "AOA caption_current_native "; current
 end sub
 
 sub videoStateChanged()
