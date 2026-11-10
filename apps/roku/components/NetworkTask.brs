@@ -8,6 +8,13 @@ sub networkLoop()
     m.top.ObserveField("request", m.port)
     m.registry = CreateObject("roRegistrySection", "AOATV")
     m.base = m.registry.Read("base")
+    ' The household deployment is automatic; an absent saved origin must not
+    ' leave an otherwise enrolled Roku unable to connect after an update.
+    if m.base = ""
+        m.base = "https://aoa-tv-akramekhairi.northcentralus.cloudapp.azure.com"
+        m.registry.Write("base", m.base)
+        m.registry.Flush()
+    end if
     ' Migrate only the recognized hosted origin once; preserve custom setup and
     ' allow an administrator to restore the old origin after this migration.
     if m.base = "https://aoa-tv-api.onrender.com" and m.registry.Read("azureMigration202611") <> "1"
