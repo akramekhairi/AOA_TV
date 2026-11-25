@@ -68,3 +68,14 @@ The developer installer reported success and ECP reported AOA TV as the active a
 - Phone API address controls removed; name empty with a placeholder, explicit name required, TV-code request cooldown supported. Existing token migration and trusted rollback pass automated tests.
 - 51 automated tests pass (26 server / 25 web), plus TypeScript/BrightScript, production build, generic Roku ZIP and public secret scans.
 - Pages now targets Azure; Render suspended and scheduled keep-alive disabled. Full physical Android/iPhone acceptance matrix remains unverified.
+
+## Memory and series collections, 2026-11-24
+
+- 60 automated tests pass, plus TypeScript/BrightScript checks, production builds, Roku packaging and staged private-data scan.
+- Credential-free Linux container test: 32,421 titles, three catalog refreshes, 1,000 episode progress records, artwork overload and concurrent household polling. Peak process RSS 336 MiB under a 512 MiB memory limit and 256 MiB Node heap.
+- Azure swap enabled persistently (2 GiB); app pinned to the validated image digest with 512 MiB RAM / 1 GiB combined RAM-plus-swap limits. Real provider refresh loaded 51,634 titles; cgroup peak was 417 MiB, with zero OOM events and zero restarts. Durable catalog save returned 503 after its existing 60-second storage timeout; current catalog remains usable. This storage issue remains separate from memory stabilization.
+- Public health/readiness HTTP 200; six Continue Watching cards represent six distinct series. Episode detail exposes its saved progress and immediate next episode. Favorites contain no episode entries.
+- All 39 saved episode progress records have the identical count and checksum after deployment. No progress migration or deletion was performed.
+- Roku build 11 installed and running; on-device detail UI exposes Play / Resume, Start over, Add series to favorites and Watch next episode (S1 E2). Native playback was not started during validation, preserving saved positions.
+- Phone deployment succeeded after updating official Pages artifact/deploy actions; published bundle includes the next-episode and series-favorite controls. Visual browser verification was blocked by automatic approval review of an unrelated Chrome window; no browser screenshot or mobile-device visual acceptance is claimed.
+- Minute-level numeric memory/cache logs are active. A 24-hour VM health/memory report is scheduled; completion and long-term stability remain pending.
