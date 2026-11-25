@@ -13,4 +13,4 @@ RUN mkdir -p /usr/local/share/fonts/aoa && cp assets/fonts/*.ttf /usr/local/shar
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3001
 USER node
 EXPOSE 3001
-CMD ["npm","start","--workspace=@aoa/server"]
+CMD ["node","--import","tsx","apps/server/src/main.ts"]

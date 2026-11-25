@@ -39,8 +39,13 @@ jobs:
           context: .
           file: apps/server/Dockerfile
           platforms: linux/amd64
-          push: true
+          load: true
+          push: false
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Verify memory under production container limits
+        run: docker run --rm --memory=512m --memory-swap=1g -e NODE_OPTIONS=--max-old-space-size=256 -e MALLOC_ARENA_MAX=2 "$IMAGE:sha-$GITHUB_SHA" node --import tsx apps/server/test/memory-smoke.mts
+      - name: Publish verified image
+        run: docker push "$IMAGE:sha-$GITHUB_SHA"

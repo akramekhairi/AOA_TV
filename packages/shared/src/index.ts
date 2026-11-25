@@ -5,6 +5,7 @@ export interface ContentItem {
   seriesId?: string; season?: number; episode?: number; extension?: string;
   imdbId?: string; tmdbId?: string; titleImage?: string; descriptionImage?: string;
 }
+export interface ContentDetail extends ContentItem { nextEpisode?: ContentItem; progress?: Progress }
 export interface Category { id: string; title: string; type: MediaType; titleImage?: string }
 export interface CatalogPage { items: ContentItem[]; total: number; page: number; pageSize: number }
 export interface Progress { contentId: string; position: number; duration: number; completed: boolean; updatedAt: string; item?: ContentItem }

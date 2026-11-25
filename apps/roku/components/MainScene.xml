@@ -17,9 +17,9 @@
       <Rectangle translation="[284,116]" width="972" height="552" color="0x0B1220FF" />
       <Poster id="fullTitle" translation="[310,126]" width="880" height="70" loadDisplayMode="scaleToFit" />
       <Label id="fullTitleText" translation="[310,136]" width="880" height="60" font="font:MediumBoldSystemFont" />
-      <Poster id="fullDescription" translation="[310,208]" width="880" height="284" loadDisplayMode="scaleToFit" />
-      <Label id="fullDescriptionText" translation="[310,208]" width="880" height="284" wrap="true" numLines="9" font="font:SmallSystemFont" />
-      <LabelList id="detailButtons" translation="[310,514]" itemSize="[850,48]" numRows="3" />
+      <Poster id="fullDescription" translation="[310,208]" width="880" height="244" loadDisplayMode="scaleToFit" />
+      <Label id="fullDescriptionText" translation="[310,208]" width="880" height="244" wrap="true" numLines="7" font="font:SmallSystemFont" />
+      <LabelList id="detailButtons" translation="[310,466]" itemSize="[850,48]" numRows="4" />
     </Group>
     <Video id="video" width="1280" height="720" visible="false" enableUI="true" notificationInterval="1" />
     <!-- After Video in draw order; this panel never takes remote focus. -->

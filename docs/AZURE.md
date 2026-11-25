@@ -108,3 +108,11 @@ The active endpoint is https://aoa-tv-akramekhairi.northcentralus.cloudapp.azure
 For rollback, resume the saved Render service, deploy the tested server version and verify readiness/provider access. Change the Pages VITE_API_URL variable back to the known Render origin and run the Pages workflow. Set Roku Settings backend origin back to Render while keeping its device token; the one-time azureMigration202611 flag prevents overriding this administrative choice on next launch. Trusted phone-origin migration preserves credentials in both directions and clears obsolete copies so logout cannot resurrect a token.
 
 The generic server image is pinned to a digest in the VM private .env. To update it, choose a successful Public server container workflow SHA/digest, update APP_IMAGE in that private file, then run sudo docker compose pull app and sudo docker compose up -d app under /opt/aoa-tv. Never print docker compose config because it expands credentials.
+
+## Backend memory safeguards
+
+Run `sudo sh memory-safeguards.sh` after copying `infra/azure/memory-safeguards.sh` to the VM. It creates/enables a persistent 2 GiB `/swapfile` and sets swappiness to 10. It is idempotent and does not resize the VM. Back up `/etc/fstab` and the private Compose configuration before applying changes. The swapfile consumes 2 GiB of the existing disk.
+
+The Compose app limit is 512 MiB RAM and 1 GiB combined RAM-plus-swap, with a 256 MiB Node old-space heap and two glibc arenas. Bounded metadata/artwork caches and serialized large catalog downloads reduce pressure; swap and container limits contain spikes. The container workflow runs a credential-free 32,421-item catalog/artwork/polling load under these limits and rejects peak process RSS of 460 MiB or higher before publishing the image.
+
+After updates, check public `/health` and `/ready`, container `OOMKilled`/restart count, `docker stats --no-stream`, swap use, and the app's minute-level `memory` log records. Retain the previous image digest and private Compose backup for rollback. Memory limits are protection, not a guarantee against every possible provider payload; validate live refreshes and review a 24-hour soak before declaring long-term stability.

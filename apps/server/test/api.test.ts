@@ -32,7 +32,7 @@ test('pairing, isolation, queued sessions, progress, acknowledgements and Arabic
   try { Date.now=()=>later;assert.equal((await call('GET','/tv/status',phone.token)).json().online,false); }
   finally { Date.now=realNow; }
   assert.equal((await call('PUT','/roku/progress',roku,{contentId:'xtream:episode:31',position:20,duration:20,completed:true,sessionId:second.sessionId})).statusCode,200);
-  const progress=(await call('GET','/progress',phone.token)).json();assert.ok(progress.items.some((p:any)=>p.contentId==='xtream:episode:32'&&p.position===0));
+  const progress=(await call('GET','/progress',phone.token)).json();assert.ok(progress.items.some((p:any)=>p.contentId==='xtream:episode:31'&&p.completed));
   const playback=await call('GET',`/roku/playback/${second.id}`,roku);assert.equal(playback.statusCode,200);assert.ok(playback.json().url.startsWith('https:'));assert.equal((await call('GET',`/roku/playback/${second.id}`,phone.token)).statusCode,403);
   assert.equal((await call('POST',`/roku/commands/${second.id}/ack`,roku,{status:'acknowledged'})).statusCode,200);await call('POST',`/roku/commands/${second.id}/ack`,roku,{status:'failed',error:'late failure'});assert.equal((await call('GET',`/commands/${second.id}`,phone.token)).json().status,'acknowledged');
   const subtitleSearch=(await call('GET','/subtitles/search?contentId=xtream%3Aepisode%3A31',phone.token)).json();assert.equal(subtitleSearch.suggestedId,'demo-english');assert.equal((await call('POST','/subtitles/select',phone.token,{contentId:'xtream:episode:31',subtitleId:'demo-english',offset:1.5})).statusCode,200);
@@ -63,7 +63,7 @@ test('Roku-issued playback saves progress without hydration and resumes five sec
   assert.equal((await call('POST','/commands',{action:'play',contentId:'xtream:movie:2',position:0})).json().position,0);
 });
 
-test('removing Continue Watching is shared, survives heartbeats, hides next episodes and preserves resume',async t=>{
+test('removing Continue Watching is shared, survives heartbeats, hides series and preserves resume',async t=>{
   const {app,store}=await createApp(settings);t.after(()=>app.close());
   const enrolled=await app.inject({method:'POST',url:'/api/v1/admin/enroll',headers:{'x-admin-key':settings.adminKey},payload:{name:'Roku'}});
   const roku=enrolled.json().token;
@@ -83,7 +83,7 @@ test('removing Continue Watching is shared, survives heartbeats, hides next epis
   assert.equal((await call('GET','/progress',phone)).json().items.length,1);
   const episode=(await call('POST','/commands',phone,{action:'play',contentId:'xtream:episode:31'})).json();
   await call('PUT','/roku/progress',roku,{contentId:'xtream:episode:31',sessionId:episode.sessionId,position:100,duration:100,completed:true});
-  assert.ok((await call('GET','/progress',phone)).json().items.some((p:any)=>p.contentId==='xtream:episode:32'));
-  await call('DELETE','/progress/xtream:episode:32',phone);
-  assert.ok(!(await call('GET','/progress',secondPhone)).json().items.some((p:any)=>p.contentId==='xtream:episode:32'));
+  assert.ok((await call('GET','/progress',phone)).json().items.some((p:any)=>p.contentId==='xtream:episode:31'));
+  await call('DELETE','/progress/xtream:episode:31',phone);
+  assert.ok(!(await call('GET','/progress',secondPhone)).json().items.some((p:any)=>p.contentId==='xtream:episode:31'));
 });

@@ -14,12 +14,12 @@ Base `/api/v1`. JSON requests/responses; authenticated requests use `Authorizati
 ## Catalog
 - GET `/catalog?type=live|movie|series&q=&categoryId=&page=1&pageSize=30` → CatalogPage; omitted type searches all top-level types.
 - GET `/categories?type=live|movie|series` → `{categories:Category[]}`.
-- GET `/content/:id` → ContentItem.
+- GET `/content/:id` returns ContentDetail (ContentItem plus optional saved `progress` and immediate `nextEpisode`). Next-episode lookup failure leaves the current item playable; the finale omits `nextEpisode`.
 - GET `/series/:id/episodes` → `{items:ContentItem[]}`.
 - POST `/catalog/refresh` → `{ok:true}`.
-- GET `/favorites` → `{items:ContentItem[]}`; PUT `/favorites/:id` and DELETE `/favorites/:id` → `{ok:true}`.
-- GET `/progress` → `{items:Progress[]}` (in-progress and next episodes).
-- DELETE `/progress/:id` → `{ok:true}` hides that item from the shared Continue Watching list, retaining its resume position. Ongoing progress reports keep it hidden; explicitly playing it again restores it to the list.
+- GET `/favorites` returns `{items:ContentItem[]}`. Episode favorites normalize to parent series, deduplicated; unresolved legacy episode IDs remain privately stored for later resolution. PUT/DELETE `/favorites/:id` accept episode IDs as parent-series aliases and return `{ok:true}`.
+- GET `/progress` returns `{items:Progress[]}`: unfinished movies plus one most recently watched episode per series (including completed episodes), sorted by viewing time. Grouping precedes the 100-card limit. Per-episode progress and resume positions are retained independently.
+- DELETE `/progress/:id` returns `{ok:true}`. An episode hides its entire series until a newer playback progress report; a series ID also hides the series. Movie and legacy episode hides retain their previous behavior. No saved progress is deleted.
 
 ## Playback and status
 - GET `/tv/status` → TvStatus.

@@ -55,7 +55,9 @@ export async function fetchPosterBytes(source:string,allowedHosts:string[],depen
 export class Assets {
   private cache=new Map<string,Asset>();private size=0;private fontHash='';private pending=new Map<string,Promise<Asset>>();private running=0;private waiters:(()=>void)[]=[];private uploads=Promise.resolve();
   constructor(private config:Config,private store:Store,private catalog:Catalog) {}
+  memoryStats(){return {cacheBytes:this.size,cacheEntries:this.cache.size,pending:this.pending.size,running:this.running};}
   async init(){
+    sharp.cache({memory:16,files:0,items:32});sharp.concurrency(1);
     const directory=dirname(this.config.fontPath);const paths=[this.config.fontPath,join(directory,'NotoSans-Regular.ttf'),join(directory,'NotoSansSymbols-Regular.ttf'),join(directory,'NotoSansSymbols2-Regular.ttf')];
     const hash=createHash('sha256').update(JSON.stringify(RENDER_SETTINGS)).update(JSON.stringify(sharp.versions));
     for(const path of paths){const bytes=await readFile(path);if(bytes.length<10000)throw new Error('Bundled render font is invalid');hash.update(bytes);}
@@ -75,7 +77,7 @@ export class Assets {
   verify(key:string,expires:string,signature:string){if(key.length>16000||!/^\d+$/.test(expires)||Number(expires)<Date.now()/1000||Number(expires)>Date.now()/1000+86401)throw new HttpError(403,'Asset URL expired');const expected=Buffer.from(this.signature(key,expires));const actual=Buffer.from(signature||'');if(actual.length!==expected.length||!timingSafeEqual(actual,expected))throw new HttpError(403,'Invalid asset signature');return Buffer.from(key.endsWith('.srt')?key.slice(0,-4):key,'base64url').toString('utf8');}
   decorate(item:ContentItem):ContentItem {return {...item,poster:item.poster?this.url(`poster:${item.id}`):undefined,titleImage:this.url(`text:title:${item.title.slice(0,300)}`),descriptionImage:item.description?this.url(`text:description:${item.description.slice(0,1800)}`):undefined};}
   category(item:Category):Category{return {...item,titleImage:this.url(`text:title:${item.title.slice(0,300)}`)};}
-  private remember(key:string,asset:Asset){if(asset.bytes.length>10*1024*1024)throw new HttpError(413,'Asset too large');const old=this.cache.get(key);if(old)this.size-=old.bytes.length;this.cache.delete(key);while(this.size+asset.bytes.length>64*1024*1024&&this.cache.size){const first=this.cache.keys().next().value!;this.size-=this.cache.get(first)!.bytes.length;this.cache.delete(first);}this.cache.set(key,asset);this.size+=asset.bytes.length;}
+  private remember(key:string,asset:Asset){if(asset.bytes.length>10*1024*1024)throw new HttpError(413,'Asset too large');const old=this.cache.get(key);if(old)this.size-=old.bytes.length;this.cache.delete(key);while(this.size+asset.bytes.length>16*1024*1024&&this.cache.size){const first=this.cache.keys().next().value!;this.size-=this.cache.get(first)!.bytes.length;this.cache.delete(first);}this.cache.set(key,asset);this.size+=asset.bytes.length;}
   async put(descriptor:string,asset:Asset) {
     const key=this.key(descriptor);if(this.cache.has(key))return this.url(descriptor);this.remember(key,asset);
     if(this.store.client){
@@ -85,8 +87,8 @@ export class Assets {
     return this.url(descriptor);
   }
   async get(descriptor:string):Promise<Asset> {
-    const key=this.key(descriptor);const cached=this.cache.get(key);if(cached)return cached;const pending=this.pending.get(key);if(pending)return pending;if(this.pending.size>=48)throw new HttpError(429,'Asset renderer busy; retry shortly');
-    const work=(async()=>{if(this.running>=2)await new Promise<void>(r=>this.waiters.push(r));this.running++;try{return await this.load(descriptor,key);}finally{this.running--;this.waiters.shift()?.();}})();this.pending.set(key,work);try{return await work;}finally{this.pending.delete(key);}
+    const key=this.key(descriptor);const cached=this.cache.get(key);if(cached)return cached;const pending=this.pending.get(key);if(pending)return pending;if(this.pending.size>=16)throw new HttpError(429,'Asset renderer busy; retry shortly');
+    const work=(async()=>{if(this.running>=1)await new Promise<void>(r=>this.waiters.push(r));this.running++;try{return await this.load(descriptor,key);}finally{this.running--;this.waiters.shift()?.();}})();this.pending.set(key,work);try{return await work;}finally{this.pending.delete(key);}
   }
   async readStored(descriptor:string):Promise<Asset|undefined>{
     const key=this.key(descriptor);const cached=this.cache.get(key);if(cached)return cached;

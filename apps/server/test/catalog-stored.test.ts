@@ -59,7 +59,7 @@ test('stale snapshot serves items and categories immediately while exactly one p
     const page=await fake.catalog.list({});assert.equal(page.total,3);
     assert.equal((await fake.catalog.categoryList())[0].title,'Saved movies');
     await Promise.all([fake.catalog.list({}),fake.catalog.list({}),fake.catalog.categoryList()]);
-    assert.equal(fake.queries(),1);assert.equal(provider.mock.callCount(),6);
+    assert.equal(fake.queries(),1);assert.equal(provider.mock.callCount(),1);
   }finally{release();await tick();}
   assert.equal((await fake.catalog.list({})).items[0].title,'Fresh movie');assert.equal(fake.queries(),1);
 });
@@ -67,9 +67,9 @@ test('failed background refresh retains stale data and waits sixty seconds befor
   let now=Date.now();t.mock.method(Date,'now',()=>now);
   const provider=t.mock.method(globalThis,'fetch',async()=>new Response('unavailable',{status:502}));
   const fake=fixture(async()=>oldSnapshot());
-  assert.equal((await fake.catalog.list({})).total,3);await tick();assert.equal(provider.mock.callCount(),6);
-  now+=59999;assert.equal((await fake.catalog.list({})).total,3);assert.equal(provider.mock.callCount(),6);
-  now+=2;assert.equal((await fake.catalog.list({})).total,3);await tick();assert.equal(provider.mock.callCount(),12);
+  assert.equal((await fake.catalog.list({})).total,3);await tick();assert.equal(provider.mock.callCount(),1);
+  now+=59999;assert.equal((await fake.catalog.list({})).total,3);assert.equal(provider.mock.callCount(),1);
+  now+=2;assert.equal((await fake.catalog.list({})).total,3);await tick();assert.equal(provider.mock.callCount(),2);
   assert.equal(fake.queries(),1);
 });
 test('cache persistence failure keeps fresh provider data usable and explicit refresh reports failure',async t=>{
@@ -84,4 +84,38 @@ test('initial empty catalog waits for provider and propagates provider failure',
   t.mock.method(globalThis,'fetch',async()=>new Response('unavailable',{status:502}));
   const fake=fixture(async()=>({data:null,error:null}));
   await assert.rejects(fake.catalog.list({}),(error:any)=>error.statusCode===502);
+});
+
+test('a partially fetched refresh does not replace the complete previous catalog',async t=>{
+  t.mock.method(globalThis,'fetch',async(input:string|URL|Request)=>{
+    const action=new URL(String(input)).searchParams.get('action');
+    return action==='get_live_categories'?new Response('failed',{status:502}):Response.json([{stream_id:42,name:'Partial live channel'}]);
+  });
+  const fake=fixture(async()=>snapshot());await fake.catalog.list({});
+  await assert.rejects(fake.catalog.refresh());
+  assert.deepEqual((await fake.catalog.list({})).items.map(item=>item.id),items.map(item=>item.id));
+});
+
+test('concurrent series lookups share one provider request; eviction reloads persisted episode IDs',async t=>{
+  let seriesCalls=0,episodeReads=0;
+  const seriesItems:ContentItem[]=Array.from({length:35},(_,i)=>({id:`xtream:series:${i}`,providerId:String(i),type:'series',title:`Series ${i}`}));
+  const episode=(id:string):ContentItem=>({id,providerId:id.split(':')[2]!,type:'episode',title:'Episode',seriesId:'xtream:series:0',season:1,episode:1});
+  const client={from(table:string){
+    if(table==='aoa_catalog')return {select(){return {eq(){return {maybeSingle:async()=>({data:{payload:{items:seriesItems,categories:[]},updated_at:new Date().toISOString()},error:null})};}};}};
+    return {upsert:async()=>({error:null}),select(){return {eq(_column:string,id:string){return {maybeSingle:async()=>{episodeReads++;return {data:{payload:episode(id)},error:null};}};}};}};
+  }};
+  t.mock.method(globalThis,'fetch',async(input:string|URL|Request)=>{
+    seriesCalls++;await tick();const id=new URL(String(input)).searchParams.get('series_id');
+    return Response.json({episodes:{1:[{id:`${id}01`,title:'Episode',season:1,episode_num:1}]}});
+  });
+  const catalog=new Catalog({demo:false,xtreamUrl:'https://provider.invalid',xtreamUser:'fixture',xtreamPassword:'fixture'} as Config,{client} as unknown as Store);
+  const results=await Promise.all(Array.from({length:8},()=>catalog.seriesEpisodes('xtream:series:0')));
+  assert.equal(seriesCalls,1);assert.equal(results[0],results[7]);
+  for(let i=1;i<35;i++)await catalog.seriesEpisodes(`xtream:series:${i}`);
+  assert.equal(catalog.memoryStats().episodes.entries,32);
+  // Fill the separate episode cache past its count bound without retaining it in top items.
+  for(let i=0;i<1001;i++)await catalog.stored(`xtream:episode:other${i}`);
+  assert.equal(catalog.memoryStats().episodeItems.entries,1000);
+  const before=episodeReads;assert.equal((await catalog.get('xtream:episode:001',false)).id,'xtream:episode:001');
+  assert.equal(episodeReads,before+1);assert.equal(catalog.memoryStats().topItems,35);
 });

@@ -346,6 +346,17 @@ sub showDetails(item as object, focus = true as boolean)
         m.detailActions = ["play", "restart", "favorite"]
         labels = ["Play / Resume", "Start over", "Toggle favorite"]
     end if
+    if item.type = "episode" and item.nextEpisode <> invalid
+        m.detailActions.Push("nextEpisode")
+        labels.Push("Watch next episode - S" + textValue(item.nextEpisode.season) + " E" + textValue(item.nextEpisode.episode))
+    end if
+    favoriteLabel = "Add to favorites"
+    favoriteId = favoriteContentId(item)
+    if item.type = "episode" then favoriteLabel = "Add series to favorites"
+    if m.favorites.DoesExist(favoriteId) then favoriteLabel = "Remove from favorites"
+    for index = 0 to m.detailActions.Count() - 1
+        if m.detailActions[index] = "favorite" then labels[index] = favoriteLabel
+    end for
     root = CreateObject("roSGNode", "ContentNode")
     for each title in labels
         node = root.CreateChild("ContentNode")
@@ -367,10 +378,14 @@ sub detailSelected()
         request("episodes", "/series/" + uri(m.selected.id) + "/episodes", "GET", invalid, {selection: m.selectionSerial})
     else if action = "favorite"
         toggleFavorite(m.selected)
-    else if action = "play" or action = "restart"
+    else if action = "play" or action = "restart" or action = "nextEpisode"
         if m.issuingPlay then return
         m.issuingPlay = true
         body = {action: "play", "contentId": m.selected.id}
+        if action = "nextEpisode"
+            if m.selected.nextEpisode = invalid then return
+            body.contentId = m.selected.nextEpisode.id
+        end if
         if action = "restart" then body.position = 0
         m.connection.text = "Requesting playback..."
         print "AOA stage native_play_requested"
@@ -392,11 +407,20 @@ sub dialogSelected()
     end if
 end sub
 
+function favoriteContentId(item as object) as string
+    if item.type = "episode" then return textValue(item.seriesId)
+    return textValue(item.id)
+end function
+
 sub toggleFavorite(item as object)
-    if item.id = invalid then return
+    id = favoriteContentId(item)
+    if id = ""
+        m.connection.text = "Series metadata unavailable. Open the series and retry."
+        return
+    end if
     method = "PUT"
-    if m.favorites.DoesExist(item.id) then method = "DELETE"
-    request("favoriteToggle", "/favorites/" + uri(item.id), method, {}, {id: item.id, enabled: method = "PUT"})
+    if m.favorites.DoesExist(id) then method = "DELETE"
+    request("favoriteToggle", "/favorites/" + uri(id), method, {}, {id: id, enabled: method = "PUT"})
 end sub
 
 sub showSeasons()
@@ -555,6 +579,7 @@ sub networkResponse()
             m.favorites.Delete(extra.id)
             m.connection.text = "Removed from favorites"
         end if
+        if m.details.visible then showDetails(m.selected, false)
         if m.nav = 1 then request("favorites", "/favorites")
     else if tag = "pair"
         showPairingDisplay(data, "")

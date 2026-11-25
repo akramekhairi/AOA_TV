@@ -2,12 +2,13 @@ import Fastify, { type FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { CommandAction, Device, PlaybackCommand, TvStatus } from '@aoa/shared';
+import type { CommandAction, ContentDetail, ContentItem, Device, PlaybackCommand, TvStatus } from '@aoa/shared';
 import type { Config } from './config.js';
 import { Store, type State } from './store.js';
 import { Catalog, HttpError } from './catalog.js';
 import { Assets } from './assets.js';
 import { Subtitles } from './subtitles.js';
+import { continueWatching, favoriteId } from './collections.js';
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 const safeEqual=(a:string,b:string)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);};
 const cleanDevice=(device:Device):Device=>({id:device.id,name:device.name,kind:device.kind,createdAt:device.createdAt});
@@ -56,6 +57,8 @@ export async function createApp(config:Config) {
     }
   });
   const store=new Store(config);try{await store.init();}catch{app.log.warn({code:'storage_unready'},'Data service unavailable at startup; requests will retry');}const catalog=new Catalog(config,store);const assets=new Assets(config,store,catalog);await assets.init();const subtitles=new Subtitles(config,assets);
+  const memoryTimer=setInterval(()=>app.log.info({code:'memory',...process.memoryUsage(),catalog:catalog.memoryStats(),assets:assets.memoryStats()},'Backend memory'),60000);memoryTimer.unref();
+  app.addHook('onClose',async()=>{clearInterval(memoryTimer);});
   let rokuPresence: {deviceId:string;at:number;connectionId?:string} | undefined;
   app.decorateRequest('device',null);
   const auth=async(req:FastifyRequest)=>{const token=req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];if(!token||token.length>200)throw new HttpError(401,'Device token required');const state=await store.read();const device=Object.values(state.devices).find(d=>!d.revoked&&safeEqual(d.tokenHash,hash(token)));if(!device)throw new HttpError(401,'Device token invalid or revoked');(req as any).device=cleanDevice(device);};
@@ -95,24 +98,52 @@ export async function createApp(config:Config) {
   app.delete<{Params:{id:string}}>(base+'/devices/:id',{preHandler:roku},async req=>{await store.change(state=>{const device=state.devices[req.params.id];if(!device||device.revoked)throw new HttpError(404,'Device not found');if(device.kind!=='phone')throw new HttpError(400,'Only phones can be revoked');device.revoked=true;});return {ok:true};});
   app.get<{Querystring:{type?:string;q?:string;categoryId?:string;page?:string;pageSize?:string}}>(base+'/catalog',{preHandler:auth},async req=>{const page=await catalog.list(req.query);return {...page,items:page.items.map(item=>assets.decorate(item))};});
   app.get<{Querystring:{type?:string}}>(base+'/categories',{preHandler:auth},async req=>({categories:(await catalog.categoryList(req.query.type)).map(item=>assets.category(item))}));
-  app.get<{Params:{id:string}}>(base+'/content/:id',{preHandler:auth},async req=>assets.decorate(await catalog.get(contentId(req.params.id))));
+  app.get<{Params:{id:string}}>(base+'/content/:id',{preHandler:auth},async req=>{
+    const item=await catalog.get(contentId(req.params.id));const result:ContentDetail=assets.decorate(item);
+    const progress=(await store.read()).progress[item.id];if(progress)result.progress={...progress,item:undefined};
+    if(item.type==='episode'&&item.seriesId){try{
+      let episodes=await catalog.storedEpisodes(item.seriesId);let index=episodes.findIndex(e=>e.id===item.id);
+      if(index<0||index===episodes.length-1){episodes=await catalog.seriesEpisodes(item.seriesId);index=episodes.findIndex(e=>e.id===item.id);}
+      if(index>=0&&episodes[index+1])result.nextEpisode=assets.decorate(episodes[index+1]!);
+    }catch{/* Playback remains available if the next episode cannot be resolved. */}}
+    return result;
+  });
   app.get<{Params:{id:string}}>(base+'/series/:id/episodes',{preHandler:auth},async req=>({items:(await catalog.seriesEpisodes(contentId(req.params.id))).map(item=>assets.decorate(item))}));
   app.post(base+'/catalog/refresh',{preHandler:auth,config:{rateLimit:{max:2,timeWindow:'1 minute'}}},async()=>{await catalog.refresh();return {ok:true};});
-  app.get(base+'/favorites',{preHandler:auth},async()=>{const state=await store.read();const items=await Promise.all(state.favorites.map(async id=>{try{const item=await catalog.stored(id);return item?assets.decorate(item):undefined;}catch{return undefined;}}));return {items:items.filter(Boolean)};});
-  app.put<{Params:{id:string}}>(base+'/favorites/:id',{preHandler:auth},async req=>{const item=await catalog.get(contentId(req.params.id));await store.change(state=>{if(!state.favorites.includes(item.id)){if(state.favorites.length>=1000)throw new HttpError(409,'Favorite limit reached');state.favorites.push(item.id);}});return {ok:true};});
-  app.delete<{Params:{id:string}}>(base+'/favorites/:id',{preHandler:auth},async req=>{await store.change(state=>{state.favorites=state.favorites.filter(id=>id!==req.params.id);});return {ok:true};});
-  app.get(base+'/progress',{preHandler:auth},async()=>{
-    const state=await store.read();const items=[];const nextIds=new Set<string>();
-    for(const progress of Object.values(state.progress).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,100)) {
-      if(state.hiddenProgress?.[progress.contentId])continue;
-      let item=progress.item;try{item=item||await catalog.stored(progress.contentId);}catch{continue;}if(!item)continue;
-      if(!progress.completed&&progress.position>0)items.push({...progress,item:assets.decorate(item)});
-      if(progress.completed&&item.type==='episode'&&item.seriesId){try{const episodes=await catalog.storedEpisodes(item.seriesId);const index=episodes.findIndex(e=>e.id===item.id);const next=index>=0?episodes[index+1]:undefined;if(next&&!state.hiddenProgress?.[next.id]&&!state.progress[next.id]?.completed&&!nextIds.has(next.id)){nextIds.add(next.id);const p=state.progress[next.id]||{contentId:next.id,position:0,duration:0,completed:false,updatedAt:progress.updatedAt};if(!p.position)items.push({...p,item:assets.decorate(next)});}}catch{/* One unavailable series cannot hide other progress. */}}
-    }
+  const normalizeFavorites=async()=>{
+    const state=await store.read();const replacements=new Map<string,string>();
+    for(const id of state.favorites){if(!id.startsWith('xtream:episode:'))continue;try{
+      const item=await catalog.stored(id);if(!item?.seriesId)continue;
+      const parent=await catalog.stored(item.seriesId);if(parent?.type==='series')replacements.set(id,parent.id);
+    }catch{/* Retain unresolved legacy IDs privately for a later retry. */}}
+    if(replacements.size)await store.change(current=>{current.favorites=[...new Set(current.favorites.map(id=>replacements.get(id)||id))];});
+  };
+  const resolveFavorite=async(id:string)=>{
+    const item=await catalog.get(id,false);const target=favoriteId(item);
+    if(!target)throw new HttpError(409,'Series metadata unavailable; open the series and retry');
+    if(item.type==='episode'){const parent=await catalog.get(target,false);if(parent.type!=='series')throw new HttpError(409,'Series metadata unavailable');return parent;}
+    return item;
+  };
+  app.get(base+'/favorites',{preHandler:auth},async()=>{
+    await normalizeFavorites();const state=await store.read();const items:ContentItem[]=[];
+    for(const id of state.favorites){try{const item=await catalog.stored(id);if(item&&item.type!=='episode')items.push(assets.decorate(item));}catch{/* Preserve other favorites. */}}
     return {items};
   });
+  app.put<{Params:{id:string}}>(base+'/favorites/:id',{preHandler:auth},async req=>{
+    const item=await resolveFavorite(contentId(req.params.id));await normalizeFavorites();
+    await store.change(state=>{if(!state.favorites.includes(item.id)){if(state.favorites.length>=1000)throw new HttpError(409,'Favorite limit reached');state.favorites.push(item.id);}});return {ok:true};
+  });
+  app.delete<{Params:{id:string}}>(base+'/favorites/:id',{preHandler:auth},async req=>{
+    const id=contentId(req.params.id);const target=id.startsWith('xtream:episode:')?(await resolveFavorite(id)).id:id;
+    await normalizeFavorites();await store.change(state=>{state.favorites=state.favorites.filter(value=>value!==target&&value!==id);});return {ok:true};
+  });
+  app.get(base+'/progress',{preHandler:auth},async()=>{
+    const items=await continueWatching(await store.read(),id=>catalog.stored(id));return {items:items.map(p=>({...p,item:assets.decorate(p.item!)}))};
+  });
   app.delete<{Params:{id:string}}>(base+'/progress/:id',{preHandler:auth},async req=>{
-    const id=contentId(req.params.id);await store.change(state=>{state.hiddenProgress??={};state.hiddenProgress[id]=timestamp();});return {ok:true};
+    const id=contentId(req.params.id);const item=(await store.read()).progress[id]?.item||await catalog.stored(id);
+    const target=item?.type==='episode'&&item.seriesId?item.seriesId:id;
+    await store.change(state=>{state.hiddenProgress??={};state.hiddenProgress[target]=timestamp();});return {ok:true};
   });
   app.get(base+'/tv/status',{preHandler:auth},async()=>{
     const state=await store.read();const device=rokuPresence&&state.devices[rokuPresence.deviceId];
